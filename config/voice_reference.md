@@ -11,7 +11,10 @@ Good candidates you already have:
 ---
 
 ## Example 1
-(paste here)
+https://www.linkedin.com/posts/himanshu-rai-b9051983_leadership-peoplemanagement-emotionalintelligence-activity-7481981225524584449-vRJq?utm_source=share&utm_medium=member_desktop&rcm=ACoAABGyQFwBkjzYD8wvV28wRHOPZmEP32oop-A
 
 ## Example 2
-(paste here)
+https://www.linkedin.com/posts/himanshu-rai-b9051983_kubernetes-eks-karpenter-activity-7479170815985389569-mNRb?utm_source=share&utm_medium=member_desktop&rcm=ACoAABGyQFwBkjzYD8wvV28wRHOPZmEP32oop-A
+
+## Example 3
+https://www.linkedin.com/posts/himanshu-rai-b9051983_kubecon-cloudnativecon-india-activity-7475027457117528064-S35p?utm_source=share&utm_medium=member_desktop&rcm=ACoAABGyQFwBkjzYD8wvV28wRHOPZmEP32oop-A
