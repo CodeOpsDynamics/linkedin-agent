@@ -1,0 +1,36 @@
+# Sources the Scanner Agent pulls from every run.
+# Add/remove freely -- keep it tight and high-signal rather than broad.
+
+rss_feeds:
+  - name: "HBR"
+    url: "https://hbr.org/feed"
+  - name: "McKinsey Insights"
+    url: "https://www.mckinsey.com/insights/rss"
+  - name: "Strategy+Business"
+    url: "https://www.strategy-business.com/rss/all_updates.xml"
+  - name: "The Economist - Business"
+    url: "https://www.economist.com/business/rss.xml"
+  - name: "Stratechery"
+    url: "https://stratechery.com/feed/"
+  - name: "MIT Sloan Management Review"
+    url: "https://sloanreview.mit.edu/feed/"
+
+# NewsAPI.org (or similar) query terms -- run as separate calls, not one combined query
+news_api_queries:
+  - "management strategy disruption"
+  - "AI adoption enterprise"
+  - "global trade policy business impact"
+  - "regulatory change industry"
+  - "circular economy e-waste policy"   # ties to PunarChakra research interest
+
+# Keywords used to nudge the Impact Classifier -- topics that historically
+# turn out to be "huge change" (article-tier) rather than routine news.
+high_impact_signals:
+  - "regulation"
+  - "central bank"
+  - "antitrust"
+  - "export control"
+  - "AI safety policy"
+  - "labor market restructuring"
+  - "supply chain realignment"
+  - "geopolitical"
