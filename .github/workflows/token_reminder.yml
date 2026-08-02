@@ -1,1 +1,24 @@
+name: LinkedIn Token Expiry Reminder
 
+# Standard-tier LinkedIn apps don't get a refresh token (only Marketing
+# Developer Platform partners do) -- the access token is valid ~60 days and
+# must be renewed by re-running src/auth_flow.py locally. This nudges you
+# every 30 days so it doesn't silently expire and break the daily pipeline.
+
+on:
+  schedule:
+    - cron: "0 3 1,15 * *"   # runs on the 1st and 15th of each month
+  workflow_dispatch: {}
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Telegram reminder
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d chat_id="${TELEGRAM_CHAT_ID}" \
+            -d text="Reminder: your LinkedIn access token lasts ~60 days and doesn't auto-refresh (standard-tier apps don't get a refresh token). If it's been a while, re-run 'python src/auth_flow.py' locally and update the LINKEDIN_ACCESS_TOKEN secret on GitHub before the daily pipeline starts failing."
