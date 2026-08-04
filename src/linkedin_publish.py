@@ -1,5 +1,6 @@
 import os
 import requests
+from urllib.parse import quote
 
 ACCESS_TOKEN = os.getenv("LINKEDIN_ACCESS_TOKEN")
 
@@ -94,6 +95,7 @@ def post_first_comment(post_urn: str, comment_text: str, access_token: str = Non
     access_token = access_token or get_access_token()
 
     author_urn = get_authenticated_person_urn(access_token)
+    encoded_post_urn = quote(post_urn, safe="")
 
     payload = {
         "actor": author_urn,
@@ -103,7 +105,7 @@ def post_first_comment(post_urn: str, comment_text: str, access_token: str = Non
     }
 
     resp = requests.post(
-        f"https://api.linkedin.com/rest/socialActions/{post_urn}/comments",
+        f"https://api.linkedin.com/rest/socialActions/{encoded_post_urn}/comments",
         headers={
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json",
