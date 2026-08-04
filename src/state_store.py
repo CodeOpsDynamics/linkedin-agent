@@ -84,6 +84,14 @@ def init_db():
         )
         """
     )
+    client.execute(
+        """
+        CREATE TABLE IF NOT EXISTS processed_updates (
+            update_id INTEGER PRIMARY KEY,
+            processed_at TEXT
+        )
+        """
+    )
     client.close()
 
 
@@ -189,5 +197,43 @@ def mark_draft_published(draft_id: int, post_urn: str):
     client.execute(
         "UPDATE drafts SET status = 'published', linkedin_post_urn = ? WHERE id = ?",
         [post_urn, draft_id],
+    )
+    client.close()
+
+def try_mark_update_processed(update_id: int) -> bool:
+    """
+    Atomically marks a Telegram update as processed.
+
+    Returns:
+        True  -> first time seeing this update_id
+        False -> duplicate update
+    """
+    client = get_client()
+
+    client.execute(
+        """
+        INSERT OR IGNORE INTO processed_updates
+        (update_id, processed_at)
+        VALUES (?, ?)
+        """,
+        [
+            update_id,
+            datetime.now(timezone.utc).isoformat(),
+        ],
+    )
+
+    rs = client.execute("SELECT changes()")
+
+    inserted = rs.rows[0][0] == 1
+
+    client.close()
+
+    return inserted
+
+def mark_candidate_published(candidate_id: int):
+    client = get_client()
+    client.execute(
+        "UPDATE candidates SET status = 'published' WHERE id = ?",
+        [candidate_id],
     )
     client.close()

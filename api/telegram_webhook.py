@@ -51,6 +51,10 @@ def handle_command(chat_id, text):
         if not candidate:
             reply(chat_id, "Candidate not found.")
             return
+        
+        if candidate.get("status") == "published":
+            reply(chat_id, "This candidate has already been published.")
+            return
 
         if cmd == "/skip":
             state_store.mark_candidate_skipped(candidate_id)
@@ -112,27 +116,35 @@ def handle_command(chat_id, text):
 @app.post("/")
 @app.post("/api/telegram_webhook")
 async def webhook(request: Request, background_tasks: BackgroundTasks):
-    global LAST_UPDATE_ID
+    try:
+        body = await request.json()
 
-    body = await request.json()
+        update_id = body.get("update_id")
 
-    update_id = body.get("update_id")
+        state_store.init_db()
 
-    # Ignore duplicate Telegram retries
-    if update_id == LAST_UPDATE_ID:
+        # Duplicate Telegram update? Ignore it.
+        if update_id is not None:
+            if not state_store.try_mark_update_processed(update_id):
+                return JSONResponse({"ok": True})
+
+        message = body.get("message", {})
+
+        chat_id = str(message.get("chat", {}).get("id", ""))
+        text = message.get("text", "")
+
+        if chat_id == ALLOWED_CHAT_ID and text:
+            # Process in background so Telegram immediately gets HTTP 200
+            background_tasks.add_task(
+                handle_command,
+                chat_id,
+                text,
+            )
+
         return JSONResponse({"ok": True})
 
-    LAST_UPDATE_ID = update_id
+    except Exception as e:
+        print("Webhook Exception:", e)
 
-    message = body.get("message", {})
-
-    chat_id = str(message.get("chat", {}).get("id", ""))
-
-    text = message.get("text", "")
-
-    if chat_id == ALLOWED_CHAT_ID and text:
-        # Run publishing in background
-        background_tasks.add_task(handle_command, chat_id, text)
-
-    # Respond immediately to Telegram
-    return JSONResponse({"ok": True})
+        # Always return 200 so Telegram doesn't keep retrying
+        return JSONResponse({"ok": True})
