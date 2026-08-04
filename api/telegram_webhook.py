@@ -21,6 +21,7 @@ async def webhook_health():
     return {"status": "ok"}
 
 def reply(chat_id, text):
+    print("Sending Telegram reply:", text)
     try:
         requests.post(
             f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
@@ -40,6 +41,7 @@ def post_url_from_urn(urn):
 
 
 def handle_command(chat_id, text):
+    print("Entered handle_command")
     try:
         parts = text.strip().split()
 
@@ -152,12 +154,19 @@ async def webhook(request: Request):
         chat_id = str(message.get("chat", {}).get("id", ""))
         text = message.get("text", "")
 
+        print("Chat ID:", chat_id)
+        print("Allowed Chat ID:", ALLOWED_CHAT_ID)
+        print("Text:", text)
+
         if chat_id == ALLOWED_CHAT_ID and text:
+            print("Calling handle_command()")
             handle_command(
                 chat_id,
                 text,
             )
-
+        else:
+            print("Ignored request")
+            
         return JSONResponse({"ok": True})
 
     except Exception as e:
