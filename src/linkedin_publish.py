@@ -39,6 +39,7 @@ def get_access_token() -> str:
 
 
 def get_authenticated_person_urn(access_token: str) -> str:
+    print("userinfo token:", repr(access_token[:20]) if access_token else "EMPTY")
     resp = requests.get(
         "https://api.linkedin.com/v2/userinfo",
         headers={"Authorization": f"Bearer {access_token}"},
@@ -53,6 +54,12 @@ def publish_post(text: str, access_token: str = None) -> str:
     Pass in access_token if you already fetched one this run (e.g. to also
     call post_first_comment right after) to avoid redundant lookups."""
     access_token = access_token or get_access_token()
+
+    print("=== LINKEDIN DEBUG ===")
+    print("Token is None:", access_token is None)
+    print("Token length:", len(access_token) if access_token else 0)
+    print("Token start:", repr(access_token[:20]) if access_token else "EMPTY")
+
     author_urn = get_authenticated_person_urn(access_token)
 
     resp = requests.post(

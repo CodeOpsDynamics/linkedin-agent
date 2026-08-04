@@ -97,6 +97,8 @@ def handle_command(chat_id, text):
         )
 
         token = linkedin_publish.get_access_token()
+        print("Webhook token:", repr(token[:20]) if token else "EMPTY")
+        print("Webhook token length:", len(token) if token else 0)
 
         urn = linkedin_publish.publish_post(
             draft,
