@@ -31,11 +31,3 @@ jobs:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
         run: python -m src.pipeline_daily
-
-      - name: Commit updated state DB back to repo
-        run: |
-          git config user.name "linkedin-agent-bot"
-          git config user.email "actions@github.com"
-          git add data/agent_state.db
-          git diff --staged --quiet || git commit -m "chore: update agent state [skip ci]"
-          git push
