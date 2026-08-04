@@ -31,14 +31,11 @@ ACCESS_TOKEN = os.environ.get("LINKEDIN_ACCESS_TOKEN")
 
 
 def get_access_token() -> str:
-    if not ACCESS_TOKEN:
-        raise RuntimeError(
-            "LINKEDIN_ACCESS_TOKEN not set. Run src/auth_flow.py locally and "
-            "store the result as a GitHub secret (see README) -- and note "
-            "it needs re-running roughly every 55 days since standard-tier "
-            "LinkedIn apps don't get a refresh token."
-        )
-    return ACCESS_TOKEN
+    token = os.getenv("LINKEDIN_ACCESS_TOKEN")
+    if not token:
+        raise RuntimeError("LINKEDIN_ACCESS_TOKEN not found")
+
+    return token.strip()
 
 
 def get_authenticated_person_urn(access_token: str) -> str:
