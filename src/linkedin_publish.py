@@ -68,7 +68,7 @@ def publish_post(text: str, access_token: str = None) -> str:
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json",
         "X-Restli-Protocol-Version": "2.0.0",
-        # "LinkedIn-Version": "202601",   # disabled temporarily
+        "LinkedIn-Version": "202601",
     }
 
     resp = requests.post(
@@ -107,6 +107,7 @@ def post_first_comment(post_urn: str, comment_text: str, access_token: str = Non
         headers={
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json",
+            "LinkedIn-Version": "202601",
             "X-Restli-Protocol-Version": "2.0.0",
         },
         json=payload,
