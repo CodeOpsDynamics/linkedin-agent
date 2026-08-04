@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "api/telegram_webhook.py": {
+      "runtime": "python3.12"
+    }
+  }
+}
