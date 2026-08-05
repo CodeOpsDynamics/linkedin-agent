@@ -1,14 +1,5 @@
 """
 Notifier -- Telegram, Phase 1 (one-way send).
-
-Sends each classified candidate to you as a message. Reply/approval handling
-(Phase 4) needs a small always-on webhook receiver -- GitHub Actions cron
-can't sit and listen for your reply between runs. See README "Phase 4" for
-the Vercel-based approach (same shape as the Jyoti Darshan proxy).
-
-For now: this posts suggestions to your Telegram so you have full visibility
-into what the pipeline found and how it classified things, even before the
-approval loop is wired up.
 """
 import os
 import requests
@@ -43,14 +34,15 @@ def format_candidate_message(candidate_id: int, item: dict) -> str:
         f"Reasoning: {item.get('reasoning', '')}\n\n"
         f"Link: {item.get('link', 'n/a')}\n\n"
         f"Reply with:\n"
-        f"`/confirm {candidate_id}` to accept as suggested\n"
-        f"`/post {candidate_id}` to force POST\n"
-        f"`/article {candidate_id}` to force ARTICLE\n"
-        f"`/skip {candidate_id}` to drop it"
+        f"`/confirm {candidate_id}` to draft using suggested type\n"
+        f"`/post {candidate_id}` to draft as POST\n"
+        f"`/article {candidate_id}` to draft as ARTICLE\n"
+        f"`/skip {candidate_id}` to drop it\n\n"
+        f"_(drafting does not publish -- you'll get a draft_id and a "
+        f"separate `/publish` step to actually push it live)_"
     )
 
 
 def notify_candidates(classified_items_with_ids):
-    """classified_items_with_ids: list of (candidate_id, item_dict)"""
     for candidate_id, item in classified_items_with_ids:
         send_message(format_candidate_message(candidate_id, item))
