@@ -76,6 +76,18 @@ def init_db():
         )
         """
     )
+
+    # Migration: articles need a title + cover-image brief for the manual
+    # publish step (LinkedIn's Articles tab has no API access at all -- see
+    # README). ALTER TABLE errors if the column already exists; that's the
+    # expected steady-state after the first run, so it's swallowed here.
+    for column_def in ("title TEXT", "image_brief TEXT"):
+        try:
+            client.execute(f"ALTER TABLE drafts ADD COLUMN {column_def}")
+        except Exception as e:
+            if "duplicate column" not in str(e).lower():
+                raise
+
     client.close()
 
 
@@ -156,11 +168,22 @@ def mark_candidate_published(candidate_id: int):
     client.close()
 
 
-def add_draft(candidate_id: int, draft_type: str, draft_text: str):
+def mark_candidate_delivered_manual(candidate_id: int):
+    """Terminal state for articles: LinkedIn's Articles tab can't be reached
+    via API, so this marks that the ready-to-paste package was handed to
+    Himanshu -- not that it's actually live yet. Prevents the same
+    candidate from being re-drafted/re-queued."""
+    client = get_client()
+    client.execute("UPDATE candidates SET status = 'delivered_manual' WHERE id = ?", [candidate_id])
+    client.close()
+
+
+def add_draft(candidate_id: int, draft_type: str, draft_text: str, title: str = None, image_brief: str = None):
     client = get_client()
     client.execute(
-        "INSERT INTO drafts (candidate_id, draft_type, draft_text, created_at) VALUES (?, ?, ?, ?)",
-        [candidate_id, draft_type, draft_text, datetime.now(timezone.utc).isoformat()],
+        "INSERT INTO drafts (candidate_id, draft_type, draft_text, title, image_brief, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        [candidate_id, draft_type, draft_text, title, image_brief, datetime.now(timezone.utc).isoformat()],
     )
     rs = client.execute("SELECT last_insert_rowid()")
     draft_id = rs.rows[0][0]
@@ -188,6 +211,13 @@ def mark_draft_published(draft_id: int, post_urn: str):
 def mark_draft_rejected(draft_id: int):
     client = get_client()
     client.execute("UPDATE drafts SET status = 'rejected' WHERE id = ?", [draft_id])
+    client.close()
+
+
+def mark_draft_delivered_manual(draft_id: int):
+    """Terminal state for articles -- see mark_candidate_delivered_manual."""
+    client = get_client()
+    client.execute("UPDATE drafts SET status = 'delivered_manual' WHERE id = ?", [draft_id])
     client.close()
 
 

@@ -12,9 +12,19 @@ instruction. Decoupling was necessary after two failure modes: (1) hashtags
 placed at the end of the body got silently truncated when the body ran long,
 and (2) a delimiter-based approach depended on the model reliably emitting
 an exact marker string, which it didn't always do.
+
+Article title + cover-image brief follow the same "dedicated small call"
+pattern for the same reason -- and also because LinkedIn's native Articles
+tab (title + cover image + rich body) has NO API support at all, on any
+access tier. There is no endpoint to publish to it, period. So "article"
+drafts get a title and a cover-image suggestion bundled with the body, and
+the Telegram/scheduled-publish flow hands the whole package to Himanshu to
+paste into LinkedIn's Articles editor himself -- see telegram_webhook.py and
+scheduled_publish.py for that hand-off.
 """
 import os
 from pathlib import Path
+from urllib.parse import quote as url_quote
 import anthropic
 
 client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
@@ -24,6 +34,9 @@ POSITIONING_PATH = Path(__file__).parent.parent / "config" / "positioning_strate
 # keep below LinkedIn's 4000-character hard limit
 LINKEDIN_MAX_CHARS = 3800
 HASHTAG_RESERVE = 80  # room reserved for "\n\n#Tag1 #Tag2 #Tag3"
+
+# LinkedIn's recommended article/newsletter cover-image dimensions (2026).
+ARTICLE_IMAGE_SPEC = "1200x644px, 1.91:1 ratio"
 
 ALGORITHM_RULES = """
 Formatting rules (LinkedIn 2026 ranking behavior -- follow strictly):
@@ -108,6 +121,29 @@ Positioning pillars/keywords to draw from:
 {positioning}
 """
 
+TITLE_PROMPT = """Given this LinkedIn ARTICLE topic, write ONE compelling,
+specific title for LinkedIn's native Articles feature -- 6-12 words, in
+Himanshu Rai's voice (confident, direct, no fluff, no clickbait, no colon-
+subtitle padding unless it genuinely earns its place).
+
+Topic: {title}
+Summary: {summary}
+Classification reasoning: {reasoning}
+
+Output ONLY the title text. No quotes, no preamble, no explanation.
+"""
+
+IMAGE_BRIEF_PROMPT = """Given this LinkedIn article topic, suggest a cover-
+image concept for LinkedIn's article cover slot ({image_spec}).
+
+Output ONLY 3-4 comma-separated, concrete, stock-photo-findable visual
+keywords -- e.g. "server room blue light, data center corridor, fiber optic
+cables macro". No preamble, no explanation, no full sentences.
+
+Topic: {title}
+Summary: {summary}
+"""
+
 
 def load_voice_reference():
     if VOICE_REF_PATH.exists():
@@ -151,6 +187,71 @@ def generate_hashtags(title: str, positioning: str) -> str:
     except Exception as e:
         print(f"[writer] WARN: hashtag generation failed: {e}")
     return ""
+
+
+def generate_article_title(candidate: dict) -> str:
+    """Dedicated small call, articles only. Falls back to the source item's
+    own title if the call fails, rather than leaving the field empty."""
+    try:
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=60,
+            messages=[{
+                "role": "user",
+                "content": TITLE_PROMPT.format(
+                    title=candidate["title"],
+                    summary=candidate.get("summary", ""),
+                    reasoning=candidate.get("reasoning", ""),
+                ),
+            }],
+        )
+        generated = "".join(
+            block.text for block in response.content if block.type == "text"
+        ).strip().strip('"')
+        if generated and len(generated) < 200:
+            return generated
+    except Exception as e:
+        print(f"[writer] WARN: title generation failed: {e}")
+    return candidate.get("title", "")
+
+
+def generate_image_brief(candidate: dict) -> str:
+    """Dedicated small call, articles only -- returns comma-separated visual
+    search keywords for a cover image. No image is generated or fetched
+    (keeps the stack API-key-free for this step); Himanshu picks one
+    manually via the constructed search link or Canva."""
+    try:
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=60,
+            messages=[{
+                "role": "user",
+                "content": IMAGE_BRIEF_PROMPT.format(
+                    title=candidate["title"],
+                    summary=candidate.get("summary", ""),
+                    image_spec=ARTICLE_IMAGE_SPEC,
+                ),
+            }],
+        )
+        keywords = "".join(
+            block.text for block in response.content if block.type == "text"
+        ).strip()
+        if keywords and len(keywords) < 200:
+            return keywords
+    except Exception as e:
+        print(f"[writer] WARN: image brief generation failed: {e}")
+    return ""
+
+
+def build_image_search_link(image_brief: str) -> str:
+    """Turns the first keyword phrase into a one-tap Unsplash search link --
+    no image-gen API key needed, Himanshu picks and downloads manually."""
+    if not image_brief:
+        return ""
+    first_phrase = image_brief.split(",")[0].strip()
+    if not first_phrase:
+        return ""
+    return f"https://unsplash.com/s/photos/{url_quote(first_phrase)}"
 
 
 def condense_body(body: str, char_limit: int) -> str:
