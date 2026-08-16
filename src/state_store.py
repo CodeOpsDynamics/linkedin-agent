@@ -242,6 +242,21 @@ def queue_draft(draft_id: int):
     client.close()
 
 
+def get_latest_actionable_draft():
+    """Most recent draft still awaiting a publish/discard decision (status
+    'pending_final_review') -- lets /publish, /publishnow, /discard work
+    without the draft_id when there's an obvious 'the thing I just drafted'
+    to act on, instead of forcing a copy-paste of the id every time."""
+    client = get_client()
+    rs = client.execute(
+        "SELECT * FROM drafts WHERE status = 'pending_final_review' "
+        "ORDER BY created_at DESC LIMIT 1"
+    )
+    result = _row_to_dict(rs, rs.rows[0]) if rs.rows else None
+    client.close()
+    return result
+
+
 def get_next_queued_draft(draft_type: str = None):
     """Oldest queued draft, if any -- used by the daily scheduled-publish jobs.
     Pass draft_type='post' or 'article' to pull only that slot's queue;
