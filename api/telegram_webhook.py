@@ -25,10 +25,19 @@ async def webhook_health():
     return {"status": "ok"}
 
 
-def reply(chat_id, text):
-    print("Sending Telegram reply:", text)
+TELEGRAM_MAX_CHARS = 4096  # Telegram's hard per-message limit for sendMessage
+
+
+def _send_single_message(chat_id, text):
+    """One actual API call. Returns True on success. Logs the REAL reason
+    on failure instead of swallowing it -- previously this only caught
+    network-level exceptions (timeouts, connection errors); if Telegram's
+    API itself rejected the message (e.g. 400 Bad Request for exceeding
+    the 4096-char limit), requests.post() doesn't raise anything, so that
+    failure was invisible: no error in the logs, nothing sent to Telegram,
+    nothing to go on. Checking response.ok surfaces exactly that case."""
     try:
-        requests.post(
+        resp = requests.post(
             f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
             data={
                 "chat_id": chat_id,
@@ -37,8 +46,47 @@ def reply(chat_id, text):
             },
             timeout=20,
         )
+        if not resp.ok:
+            print(f"Telegram API rejected message (status {resp.status_code}): {resp.text}")
+            return False
+        return True
     except Exception as e:
         print("Telegram reply failed:", e)
+        return False
+
+
+def reply(chat_id, text):
+    """Article drafts (title + body + cover-image brief + instructions) can
+    exceed Telegram's 4096-char limit on a single message, which used to
+    get silently dropped -- see _send_single_message. Long text is now
+    split on paragraph breaks (falling back to hard slices) into multiple
+    messages sent in order, so nothing gets lost just because it ran long."""
+    print("Sending Telegram reply:", text)
+
+    if len(text) <= TELEGRAM_MAX_CHARS:
+        _send_single_message(chat_id, text)
+        return
+
+    chunks = []
+    remaining = text
+    while remaining:
+        if len(remaining) <= TELEGRAM_MAX_CHARS:
+            chunks.append(remaining)
+            break
+        # prefer to break on a paragraph boundary near the limit so a
+        # message doesn't get cut mid-sentence; fall back to a hard slice
+        # if there's no paragraph break in range
+        window = remaining[:TELEGRAM_MAX_CHARS]
+        split_at = window.rfind("\n\n")
+        if split_at < TELEGRAM_MAX_CHARS * 0.5:
+            split_at = TELEGRAM_MAX_CHARS
+        chunks.append(remaining[:split_at].rstrip())
+        remaining = remaining[split_at:].lstrip()
+
+    total = len(chunks)
+    for i, chunk in enumerate(chunks, start=1):
+        prefix = f"[{i}/{total}]\n" if total > 1 else ""
+        _send_single_message(chat_id, prefix + chunk)
 
 
 def post_url_from_urn(urn):
