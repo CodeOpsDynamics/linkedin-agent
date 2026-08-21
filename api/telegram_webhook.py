@@ -120,22 +120,32 @@ def do_draft(chat_id, candidate_id, requested_type):
 
     state_store.mark_candidate_confirmed(candidate_id, confirmed_type)
 
-    # generate_draft_package runs body/hashtags/title/image-brief CONCURRENTLY
-    # instead of 4 calls in a row -- articles were creeping close to (and
-    # sometimes past) Vercel's 60s function timeout with the old sequential
-    # chain, which silently kills the request with no error reaching
-    # Telegram. See writer.py's generate_draft_package docstring.
+    # generate_draft_package runs body/hashtags/title/image-brief/teaser
+    # CONCURRENTLY instead of one after another -- articles were creeping
+    # close to (and sometimes past) Vercel's 60s function timeout with the
+    # old sequential chain, which silently kills the request with no error
+    # reaching Telegram. See writer.py's generate_draft_package docstring.
     package = writer.generate_draft_package(candidate, confirmed_type)
     draft_text = package["draft_text"]
     title = package["title"]
     image_brief = package["image_brief"]
+    teaser_post = package["teaser_post"]
 
     draft_id = state_store.add_draft(
-        candidate_id, confirmed_type, draft_text, title=title, image_brief=image_brief
+        candidate_id, confirmed_type, draft_text,
+        title=title, image_brief=image_brief, teaser_post=teaser_post,
     )
 
     if confirmed_type == "article":
         image_link = writer.build_image_search_link(image_brief)
+        teaser_block = (
+            f"\n---\n"
+            f"Suggested teaser post (publish this separately as a normal "
+            f"post once the article is live -- put the article's LinkedIn "
+            f"URL as the FIRST COMMENT on this teaser, not in its body):\n\n"
+            f"{teaser_post}\n"
+            if teaser_post else ""
+        )
         reply(
             chat_id,
             f"Draft #{draft_id} (article):\n\n"
@@ -145,6 +155,7 @@ def do_draft(chat_id, candidate_id, requested_type):
             f"Suggested cover image ({writer.ARTICLE_IMAGE_SPEC}):\n"
             f"Keywords: {image_brief}\n"
             + (f"Quick search: {image_link}\n" if image_link else "")
+            + teaser_block
             + f"\n---\n"
             f"LinkedIn's Articles tab has no API access, so publishing this "
             f"needs one manual step from you.\n"
@@ -224,16 +235,28 @@ def do_publish(chat_id, draft_id):
 def deliver_article_now(chat_id, draft, candidate):
     """Articles never touch the LinkedIn API -- this hands Himanshu
     everything he needs to paste into LinkedIn's Articles editor himself:
-    title, body, and a cover-image suggestion sized to LinkedIn's spec."""
+    title, body, and a cover-image suggestion sized to LinkedIn's spec.
+    Also resurfaces the teaser post generated at draft time -- articles
+    have no in-app auto-share, so this is the copy-paste post that drives
+    people to it, published separately with the article's URL added as
+    that teaser's first comment once it's live."""
     title = draft.get("title") or "(no title generated -- add one manually)"
     image_brief = draft.get("image_brief") or ""
     image_link = writer.build_image_search_link(image_brief) if image_brief else ""
+    teaser_post = draft.get("teaser_post") or ""
 
     comment_note = ""
     if candidate:
         comment = writer.suggest_first_comment_link(candidate)
         if comment:
             comment_note = f"\n\nSource credit (add as a comment after publishing):\n{comment}"
+
+    teaser_block = (
+        f"\n\n---\nSuggested teaser post (publish separately once the "
+        f"article's live -- add the article's URL as the FIRST COMMENT on "
+        f"this teaser, not in its body):\n\n{teaser_post}"
+        if teaser_post else ""
+    )
 
     reply(
         chat_id,
@@ -244,7 +267,8 @@ def deliver_article_now(chat_id, draft, candidate):
         f"3. Paste this body:\n\n{draft['draft_text']}\n\n"
         f"4. Cover image ({writer.ARTICLE_IMAGE_SPEC}): {image_brief}"
         + (f"\nQuick search: {image_link}" if image_link else "")
-        + comment_note,
+        + comment_note
+        + teaser_block,
     )
 
     state_store.mark_draft_delivered_manual(draft["id"])
