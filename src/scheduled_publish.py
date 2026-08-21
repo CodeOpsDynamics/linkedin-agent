@@ -29,15 +29,63 @@ BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 
+TELEGRAM_MAX_CHARS = 4096  # Telegram's hard per-message limit for sendMessage
+
+
+def _send_single_message(text: str) -> bool:
+    """One actual API call. Returns True on success and logs the REAL
+    reason on failure instead of swallowing it -- previously this only
+    caught network-level exceptions (timeouts, connection errors); if
+    Telegram's API itself rejected the message (e.g. 400 Bad Request for
+    exceeding the 4096-char limit), requests.post() doesn't raise anything,
+    so a rejected article delivery from tonight's cron run would vanish
+    with zero trace anywhere. Checking response.ok surfaces that case."""
+    try:
+        resp = requests.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+            data={"chat_id": CHAT_ID, "text": text, "disable_web_page_preview": False},
+            timeout=20,
+        )
+        if not resp.ok:
+            print(f"[scheduled_publish] Telegram API rejected message (status {resp.status_code}): {resp.text}")
+            return False
+        return True
+    except Exception as e:
+        print(f"[scheduled_publish] Telegram send failed: {e}")
+        return False
+
+
 def notify(text: str):
+    """An article delivery message (title + full 800-1200 word body +
+    cover-image brief + instructions) routinely exceeds Telegram's 4096-char
+    single-message limit, so long text is split on paragraph breaks into
+    multiple messages sent in order -- see telegram_webhook.py's reply()
+    for the same pattern used on the interactive-command side."""
     if not BOT_TOKEN or not CHAT_ID:
         print(text)
         return
-    requests.post(
-        f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-        data={"chat_id": CHAT_ID, "text": text, "disable_web_page_preview": False},
-        timeout=20,
-    )
+
+    if len(text) <= TELEGRAM_MAX_CHARS:
+        _send_single_message(text)
+        return
+
+    chunks = []
+    remaining = text
+    while remaining:
+        if len(remaining) <= TELEGRAM_MAX_CHARS:
+            chunks.append(remaining)
+            break
+        window = remaining[:TELEGRAM_MAX_CHARS]
+        split_at = window.rfind("\n\n")
+        if split_at < TELEGRAM_MAX_CHARS * 0.5:
+            split_at = TELEGRAM_MAX_CHARS
+        chunks.append(remaining[:split_at].rstrip())
+        remaining = remaining[split_at:].lstrip()
+
+    total = len(chunks)
+    for i, chunk in enumerate(chunks, start=1):
+        prefix = f"[{i}/{total}]\n" if total > 1 else ""
+        _send_single_message(prefix + chunk)
 
 
 def post_url_from_urn(urn: str) -> str:

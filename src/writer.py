@@ -32,7 +32,12 @@ client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 
 VOICE_REF_PATH = Path(__file__).parent.parent / "config" / "voice_reference.md"
 POSITIONING_PATH = Path(__file__).parent.parent / "config" / "positioning_strategy.md"
-# keep below LinkedIn's 4000-character hard limit
+# keep below LinkedIn's ~3000-character hard limit for the short-form
+# FEED POST composer. This budget applies to "post" drafts only -- LinkedIn's
+# separate long-form Articles editor (what "article" drafts are for) has no
+# comparable limit, so squeezing an 800-1200 word article down to this size
+# would gut the whole point of writing a proper article. See
+# generate_draft_package() below for where that distinction is enforced.
 LINKEDIN_MAX_CHARS = 3800
 HASHTAG_RESERVE = 120  # room reserved for up to 5 hashtags, e.g. "\n\n#Tag1 #Tag2 #Tag3 #Tag4 #Tag5"
 
@@ -109,7 +114,10 @@ Source: {source}
 Classification reasoning: {reasoning}
 
 Output only the article text with a title at the top. No hashtags, nothing else.
-Stay well under 3,500 characters.
+Write the full 800-1200 words -- there's no LinkedIn character-limit constraint
+here, since this goes through LinkedIn's separate Articles editor (manual
+paste), not the short-form post composer. Don't cut it short to fit a post-
+sized budget.
 """
 
 # Tuned against current LinkedIn engagement data + the yearly algorithm
@@ -376,9 +384,17 @@ def generate_draft_package(candidate: dict, confirmed_type: str) -> dict:
         image_brief = image_brief_future.result() if image_brief_future else None
 
     reserved = len(hashtags) + 2 if hashtags else 0
-    body_limit = LINKEDIN_MAX_CHARS - reserved
-    if len(body) > body_limit:
-        body = condense_body(body, body_limit)
+
+    # LinkedIn's short-post character budget applies to POSTS only -- an
+    # article naturally runs 800-1200 words (~5000-7500 chars), and
+    # squeezing that down to fit the post-composer budget used to gut
+    # articles down to a fraction of their intended length, defeating the
+    # entire point of writing one. Articles ship long; Telegram delivery
+    # handles the length via reply()'s automatic message-splitting instead.
+    if confirmed_type == "post":
+        body_limit = LINKEDIN_MAX_CHARS - reserved
+        if len(body) > body_limit:
+            body = condense_body(body, body_limit)
 
     draft_text = f"{body}\n\n{hashtags}" if hashtags else body
 
