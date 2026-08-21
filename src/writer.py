@@ -172,6 +172,34 @@ Topic: {title}
 Summary: {summary}
 """
 
+TEASER_POST_PROMPT = """You are drafting a short LinkedIn POST for Himanshu
+Rai that points his audience toward a longer ARTICLE he's publishing
+separately on the same topic -- the article itself is handled elsewhere;
+this is just the hook that gets people to go read it.
+
+Style reference (match tone, not content):
+{voice_ref}
+
+Positioning strategy (pillars + keywords to draw from):
+{positioning}
+""" + ALGORITHM_RULES + """
+This post has one job: make someone want to click through to the article.
+Open with the sharpest insight or claim from the piece, don't summarize the
+whole argument, leave something worth reading further for. Close by pointing
+to the article in his own voice (e.g. "I go deeper on this in an article --
+link's in the comments"), WITHOUT a raw link in the body -- the article's
+actual LinkedIn URL only exists after he publishes it manually, so it gets
+added as a first comment on this teaser post once that's done, the same way
+source links are handled for regular posts.
+
+Item: {title}
+Summary: {summary}
+Source: {source}
+Classification reasoning: {reasoning}
+
+Output only the post body text. No hashtags, nothing else.
+"""
+
 
 def load_voice_reference():
     if VOICE_REF_PATH.exists():
@@ -275,6 +303,40 @@ def generate_image_brief(candidate: dict) -> str:
     return ""
 
 
+def generate_teaser_post(candidate: dict, voice_ref: str, positioning: str) -> str:
+    """Dedicated small call, articles only -- a short copy-paste-ready POST
+    that teases the article and drives clicks to it. Delivered as a
+    SEPARATE piece from the article package (see generate_draft_package):
+    Himanshu publishes the article manually, then publishes this as its
+    own normal post, then drops the article's LinkedIn URL as a first
+    comment on THIS post -- same "no raw link in body" pattern used for
+    regular posts' source credit, for the same reach reasons."""
+    try:
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=600,
+            messages=[{
+                "role": "user",
+                "content": TEASER_POST_PROMPT.format(
+                    voice_ref=voice_ref,
+                    positioning=positioning,
+                    title=candidate["title"],
+                    summary=candidate.get("summary", ""),
+                    source=candidate.get("source", ""),
+                    reasoning=candidate.get("reasoning", ""),
+                ),
+            }],
+        )
+        teaser = "".join(
+            block.text for block in response.content if block.type == "text"
+        ).strip()
+        if teaser and len(teaser) < LINKEDIN_MAX_CHARS:
+            return teaser
+    except Exception as e:
+        print(f"[writer] WARN: teaser post generation failed: {e}")
+    return ""
+
+
 def build_image_search_link(image_brief: str) -> str:
     """Turns the first keyword phrase into a one-tap Unsplash search link --
     no image-gen API key needed, Himanshu picks and downloads manually."""
@@ -349,39 +411,52 @@ def _generate_body(candidate: dict, confirmed_type: str, voice_ref: str, positio
 def generate_draft_package(candidate: dict, confirmed_type: str) -> dict:
     """Runs every independent generation call CONCURRENTLY instead of one
     after another, and returns everything a draft needs in one shot:
-    {"draft_text": ..., "title": ..., "image_brief": ...} (title/image_brief
-    are None for posts).
+    {"draft_text": ..., "title": ..., "image_brief": ..., "teaser_post": ...}
+    (title/image_brief/teaser_post are None for posts).
 
-    Why this exists: an article draft used to need 4 sequential Claude
-    calls in a row -- body, hashtags, title, image brief -- inside a single
-    Telegram webhook request. On Vercel's Hobby-tier 60-second function
-    timeout (the hard ceiling for this plan -- already set to the max in
-    vercel.json, can't be raised without upgrading), that chain could run
-    long enough to get killed mid-request. A Vercel timeout is a hard
-    process kill, not a Python exception, so it bypasses handle_command's
-    own try/except entirely -- no error ever reaches Telegram, the request
-    just goes silent. None of these four calls actually depend on each
-    other's OUTPUT (title and image_brief only need `candidate`, not the
-    finished body), so running them in parallel threads cuts wall-clock
-    time to roughly the slowest single call instead of the sum of all four.
+    Why this exists: an article draft used to need several sequential
+    Claude calls in a row -- body, hashtags, title, image brief -- inside a
+    single Telegram webhook request. On Vercel's Hobby-tier 60-second
+    function timeout (the hard ceiling for this plan -- already set to the
+    max in vercel.json, can't be raised without upgrading), that chain
+    could run long enough to get killed mid-request. A Vercel timeout is a
+    hard process kill, not a Python exception, so it bypasses
+    handle_command's own try/except entirely -- no error ever reaches
+    Telegram, the request just goes silent. None of these calls actually
+    depend on each other's OUTPUT (title, image_brief, and teaser_post only
+    need `candidate`, not the finished body), so running them in parallel
+    threads cuts wall-clock time to roughly the slowest single call instead
+    of the sum of all of them.
+
+    teaser_post: articles have no in-app "share to feed" the way a normal
+    post does, so for articles we also generate a short, separate POST that
+    teases the article and drives clicks to it -- Himanshu publishes the
+    article manually, publishes this teaser as its own normal post, then
+    drops the article's LinkedIn URL as a first comment on the teaser
+    (never in the body -- same reach reasoning as regular posts' source
+    credit). Normal "post" drafts are unaffected -- they still go straight
+    to direct auto-publish on /publish or /publishnow as before.
     """
     voice_ref = load_voice_reference()
     positioning = load_positioning_strategy()
 
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    with ThreadPoolExecutor(max_workers=5) as pool:
         body_future = pool.submit(_generate_body, candidate, confirmed_type, voice_ref, positioning)
         hashtag_future = pool.submit(generate_hashtags, candidate["title"], positioning)
 
         title_future = None
         image_brief_future = None
+        teaser_future = None
         if confirmed_type == "article":
             title_future = pool.submit(generate_article_title, candidate)
             image_brief_future = pool.submit(generate_image_brief, candidate)
+            teaser_future = pool.submit(generate_teaser_post, candidate, voice_ref, positioning)
 
         body = body_future.result()
         hashtags = hashtag_future.result()
         title = title_future.result() if title_future else None
         image_brief = image_brief_future.result() if image_brief_future else None
+        teaser = teaser_future.result() if teaser_future else None
 
     reserved = len(hashtags) + 2 if hashtags else 0
 
@@ -397,11 +472,15 @@ def generate_draft_package(candidate: dict, confirmed_type: str) -> dict:
             body = condense_body(body, body_limit)
 
     draft_text = f"{body}\n\n{hashtags}" if hashtags else body
+    # teaser gets the same hashtags -- same topic/pillar, and it saves a
+    # redundant call for something that would land on nearly identical tags
+    teaser_post = (f"{teaser}\n\n{hashtags}" if teaser and hashtags else teaser) if teaser else None
 
     return {
         "draft_text": draft_text.strip(),
         "title": title,
         "image_brief": image_brief,
+        "teaser_post": teaser_post.strip() if teaser_post else None,
     }
 
 

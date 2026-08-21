@@ -94,16 +94,28 @@ def post_url_from_urn(urn: str) -> str:
 
 def deliver_article_package(draft: dict, candidate: dict):
     """Hands the finished article to Himanshu on Telegram for the manual
-    paste-into-Articles-tab step -- see module docstring for why."""
+    paste-into-Articles-tab step -- see module docstring for why. Also
+    resurfaces the teaser post generated at draft time: articles have no
+    in-app auto-share, so this is the copy-paste post that drives people
+    to it, published separately once the article's live, with the
+    article's URL added as that teaser's first comment."""
     title = draft.get("title") or "(no title generated -- add one manually)"
     image_brief = draft.get("image_brief") or ""
     image_link = writer.build_image_search_link(image_brief) if image_brief else ""
+    teaser_post = draft.get("teaser_post") or ""
 
     comment_note = ""
     if candidate:
         comment = writer.suggest_first_comment_link(candidate)
         if comment:
             comment_note = f"\n\nSource credit (add as a comment after publishing):\n{comment}"
+
+    teaser_block = (
+        f"\n\n---\nSuggested teaser post (publish separately once the "
+        f"article's live -- add the article's URL as the FIRST COMMENT on "
+        f"this teaser, not in its body):\n\n{teaser_post}"
+        if teaser_post else ""
+    )
 
     notify(
         f"Tonight's article is ready -- LinkedIn's Articles tab has no API "
@@ -114,6 +126,7 @@ def deliver_article_package(draft: dict, candidate: dict):
         f"4. Cover image ({writer.ARTICLE_IMAGE_SPEC}): {image_brief}"
         + (f"\nQuick search: {image_link}" if image_link else "")
         + comment_note
+        + teaser_block
     )
 
 

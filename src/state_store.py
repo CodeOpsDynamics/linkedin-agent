@@ -100,7 +100,7 @@ def init_db():
         existing_cols = {
             row[1] for row in client.execute("PRAGMA table_info(drafts)").rows
         }
-        for col_name, col_type in (("title", "TEXT"), ("image_brief", "TEXT")):
+        for col_name, col_type in (("title", "TEXT"), ("image_brief", "TEXT"), ("teaser_post", "TEXT")):
             if col_name not in existing_cols:
                 client.execute(f"ALTER TABLE drafts ADD COLUMN {col_name} {col_type}")
 
@@ -180,12 +180,12 @@ def mark_candidate_delivered_manual(candidate_id: int):
         client.execute("UPDATE candidates SET status = 'delivered_manual' WHERE id = ?", [candidate_id])
 
 
-def add_draft(candidate_id: int, draft_type: str, draft_text: str, title: str = None, image_brief: str = None):
+def add_draft(candidate_id: int, draft_type: str, draft_text: str, title: str = None, image_brief: str = None, teaser_post: str = None):
     with get_client() as client:
         client.execute(
-            "INSERT INTO drafts (candidate_id, draft_type, draft_text, title, image_brief, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            [candidate_id, draft_type, draft_text, title, image_brief, datetime.now(timezone.utc).isoformat()],
+            "INSERT INTO drafts (candidate_id, draft_type, draft_text, title, image_brief, teaser_post, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [candidate_id, draft_type, draft_text, title, image_brief, teaser_post, datetime.now(timezone.utc).isoformat()],
         )
         rs = client.execute("SELECT last_insert_rowid()")
         return rs.rows[0][0]
