@@ -71,14 +71,16 @@ def do_draft(chat_id, candidate_id, requested_type):
     reply(chat_id, f"Writing {confirmed_type} draft for review...")
 
     state_store.mark_candidate_confirmed(candidate_id, confirmed_type)
-    draft_text = writer.write_draft(candidate, confirmed_type)
 
-    title = None
-    image_brief = None
-
-    if confirmed_type == "article":
-        title = writer.generate_article_title(candidate)
-        image_brief = writer.generate_image_brief(candidate)
+    # generate_draft_package runs body/hashtags/title/image-brief CONCURRENTLY
+    # instead of 4 calls in a row -- articles were creeping close to (and
+    # sometimes past) Vercel's 60s function timeout with the old sequential
+    # chain, which silently kills the request with no error reaching
+    # Telegram. See writer.py's generate_draft_package docstring.
+    package = writer.generate_draft_package(candidate, confirmed_type)
+    draft_text = package["draft_text"]
+    title = package["title"]
+    image_brief = package["image_brief"]
 
     draft_id = state_store.add_draft(
         candidate_id, confirmed_type, draft_text, title=title, image_brief=image_brief
