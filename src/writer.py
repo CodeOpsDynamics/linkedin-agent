@@ -25,6 +25,7 @@ scheduled_publish.py for that hand-off.
 import os
 from pathlib import Path
 from urllib.parse import quote as url_quote
+from concurrent.futures import ThreadPoolExecutor
 import anthropic
 
 client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
@@ -317,11 +318,8 @@ def condense_body(body: str, char_limit: int) -> str:
     return truncated.rsplit(" ", 1)[0].rstrip() + "..."
 
 
-def write_draft(candidate: dict, confirmed_type: str) -> str:
-    voice_ref = load_voice_reference()
-    positioning = load_positioning_strategy()
+def _generate_body(candidate: dict, confirmed_type: str, voice_ref: str, positioning: str) -> str:
     template = POST_PROMPT if confirmed_type == "post" else ARTICLE_PROMPT
-
     prompt = template.format(
         voice_ref=voice_ref,
         positioning=positioning,
@@ -330,22 +328,69 @@ def write_draft(candidate: dict, confirmed_type: str) -> str:
         source=candidate.get("source", ""),
         reasoning=candidate.get("reasoning", ""),
     )
-
     response = client.messages.create(
         model="claude-sonnet-4-6",
         max_tokens=1800,
         messages=[{"role": "user", "content": prompt}],
     )
-    body = "".join(
+    return "".join(
         block.text for block in response.content if block.type == "text"
     ).strip()
 
-    hashtags = generate_hashtags(candidate["title"], positioning)
+
+def generate_draft_package(candidate: dict, confirmed_type: str) -> dict:
+    """Runs every independent generation call CONCURRENTLY instead of one
+    after another, and returns everything a draft needs in one shot:
+    {"draft_text": ..., "title": ..., "image_brief": ...} (title/image_brief
+    are None for posts).
+
+    Why this exists: an article draft used to need 4 sequential Claude
+    calls in a row -- body, hashtags, title, image brief -- inside a single
+    Telegram webhook request. On Vercel's Hobby-tier 60-second function
+    timeout (the hard ceiling for this plan -- already set to the max in
+    vercel.json, can't be raised without upgrading), that chain could run
+    long enough to get killed mid-request. A Vercel timeout is a hard
+    process kill, not a Python exception, so it bypasses handle_command's
+    own try/except entirely -- no error ever reaches Telegram, the request
+    just goes silent. None of these four calls actually depend on each
+    other's OUTPUT (title and image_brief only need `candidate`, not the
+    finished body), so running them in parallel threads cuts wall-clock
+    time to roughly the slowest single call instead of the sum of all four.
+    """
+    voice_ref = load_voice_reference()
+    positioning = load_positioning_strategy()
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        body_future = pool.submit(_generate_body, candidate, confirmed_type, voice_ref, positioning)
+        hashtag_future = pool.submit(generate_hashtags, candidate["title"], positioning)
+
+        title_future = None
+        image_brief_future = None
+        if confirmed_type == "article":
+            title_future = pool.submit(generate_article_title, candidate)
+            image_brief_future = pool.submit(generate_image_brief, candidate)
+
+        body = body_future.result()
+        hashtags = hashtag_future.result()
+        title = title_future.result() if title_future else None
+        image_brief = image_brief_future.result() if image_brief_future else None
+
     reserved = len(hashtags) + 2 if hashtags else 0
     body_limit = LINKEDIN_MAX_CHARS - reserved
-
     if len(body) > body_limit:
         body = condense_body(body, body_limit)
 
-    draft = f"{body}\n\n{hashtags}" if hashtags else body
-    return draft.strip()
+    draft_text = f"{body}\n\n{hashtags}" if hashtags else body
+
+    return {
+        "draft_text": draft_text.strip(),
+        "title": title,
+        "image_brief": image_brief,
+    }
+
+
+def write_draft(candidate: dict, confirmed_type: str) -> str:
+    """Kept for callers that only want the body text (e.g. write_confirmed.py,
+    the local CLI bridge script, which has no 60-second constraint). Thin
+    wrapper over generate_draft_package so both paths share one code path."""
+    return generate_draft_package(candidate, confirmed_type)["draft_text"]
