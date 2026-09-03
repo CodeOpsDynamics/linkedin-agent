@@ -18,10 +18,14 @@ Staying inside 2-3 consistent pillars is what builds that signal over weeks.
 1. **Platform engineering & infra strategy** -- EKS/Cilium/AWS decisions
    through a business-impact lens (cost, reliability, org velocity) --
    not pure how-to content. This is the credibility anchor.
-2. **Technology + business bridge** -- applying EMBA frameworks (Akerlof,
-   Casadesus-Masanell & Ricart, diffusion of innovation, etc.) to real
-   tech-industry events. This is the differentiator most infra people don't
-   have -- lean into it.
+2. **Technology + business bridge** -- one genuine engineering-decision-to-
+   management-insight connection per piece, in plain language. Draw on EMBA
+   thinking (Akerlof, Casadesus-Masanell & Ricart, diffusion of innovation,
+   etc.) as background intuition ONLY -- never name the framework, never
+   mention "EMBA" or "business school" in the output itself, and only include
+   this angle when the topic genuinely has one. Skip it entirely rather than
+   force it. This pillar should show up in a *minority* of posts, not every
+   one -- overuse is what makes it read as rta rta (rote/formulaic).
 3. **Sustainability / circular economy in tech** -- e-waste, EPR compliance,
    PunarChakra-adjacent themes. Smaller pillar, but ties your venture work
    into your professional brand coherently.
@@ -40,6 +44,14 @@ build-vs-buy, technical debt as a business decision, scaling engineering teams
 - No external links inside the post body -- reduces reach. If a source link
   is needed, it goes in a suggested first-comment, generated separately.
 - No keyword stuffing -- one or two natural mentions per piece, not a list.
+- No forcing a management/business-school angle into every single piece --
+  pillar 1 (pure platform-engineering-with-business-impact) should be the
+  most common pillar. Pillar 2's explicit tech-business bridge only belongs
+  in a post when the source item genuinely calls for it.
+- Never explicitly say "EMBA," "business school," "framework," or name a
+  named academic model (Akerlof, diffusion of innovation, etc.) in the
+  output text itself -- these should read as Himanshu's own thinking, not
+  as citations.
 
 ## Separate, one-time actions (not automatable by this pipeline)
 
