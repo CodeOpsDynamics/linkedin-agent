@@ -118,14 +118,33 @@ def do_draft(chat_id, candidate_id, requested_type):
 
     reply(chat_id, f"Writing {confirmed_type} draft for review...")
 
-    state_store.mark_candidate_confirmed(candidate_id, confirmed_type)
-
     # generate_draft_package runs body/hashtags/title/image-brief/teaser
     # CONCURRENTLY instead of one after another -- articles were creeping
     # close to (and sometimes past) Vercel's 60s function timeout with the
     # old sequential chain, which silently kills the request with no error
     # reaching Telegram. See writer.py's generate_draft_package docstring.
-    package = writer.generate_draft_package(candidate, confirmed_type)
+    #
+    # Only mark the candidate confirmed AFTER generation succeeds -- if the
+    # model declines (e.g. off-pillar topic), writer.py now raises instead
+    # of returning refusal text as if it were content (see
+    # writer._looks_like_refusal), and we don't want to leave the candidate
+    # stuck in a "confirmed" state for a draft that was never actually
+    # produced.
+    try:
+        package = writer.generate_draft_package(candidate, confirmed_type)
+    except Exception as e:
+        print("generate_draft_package failed:", e)
+        reply(
+            chat_id,
+            f"Couldn't generate a {confirmed_type} for this one:\n{e}\n\n"
+            f"This usually means the topic doesn't genuinely fit your "
+            f"content pillars -- try /skip {candidate_id}, or a different "
+            f"draft type if a different angle makes sense.",
+        )
+        return
+
+    state_store.mark_candidate_confirmed(candidate_id, confirmed_type)
+
     draft_text = package["draft_text"]
     title = package["title"]
     image_brief = package["image_brief"]
@@ -195,9 +214,21 @@ def do_carousel_draft(chat_id, candidate_id):
 
     reply(chat_id, "Writing carousel/document post draft for review...")
 
+    try:
+        package = writer.generate_carousel_package(candidate)
+    except Exception as e:
+        print("generate_carousel_package failed:", e)
+        reply(
+            chat_id,
+            f"Couldn't generate a carousel for this one:\n{e}\n\n"
+            f"This usually means the topic doesn't genuinely fit your "
+            f"content pillars -- try /skip {candidate_id}, or /post / "
+            f"/article if a shorter take still makes sense.",
+        )
+        return
+
     state_store.mark_candidate_confirmed(candidate_id, "carousel")
 
-    package = writer.generate_carousel_package(candidate)
     slides_text = package["draft_text"]
     hashtags = package.get("hashtags", "")
     image_brief = package["image_brief"]
