@@ -524,6 +524,39 @@ def condense_body(body: str, char_limit: int) -> str:
     return truncated.rsplit(" ", 1)[0].rstrip() + "..."
 
 
+# Phase 6 safety net: a generation call can come back with meta-commentary
+# ("I need to stop before writing this...", "this doesn't fit the
+# pillars...") instead of actual draft content -- this happened for real
+# when an off-pillar candidate (international tax policy) reached the
+# carousel generator and it correctly declined to write it, but nothing
+# caught that, so the refusal text got treated as slide content and
+# delivered to Telegram as if it were a finished draft. The classifier's
+# pillar_fit check (see classifier.py) is the primary defense -- it should
+# stop off-pillar items before they ever reach a generation call -- but
+# this is the second line of defense for anything that slips through
+# (manual /post, /article, /carousel on an older/borderline candidate_id,
+# or any other reason a call declines instead of complying).
+_REFUSAL_MARKERS = (
+    "i need to stop",
+    "i won't produce",
+    "i won't write",
+    "i can't produce",
+    "i can't write",
+    "i recommend instead",
+    "i'd recommend instead",
+    "not suitable for himanshu",
+    "doesn't fit his pillar",
+    "doesn't fit the pillar",
+    "off-pillar",
+    "off pillar",
+)
+
+
+def _looks_like_refusal(text: str) -> bool:
+    lowered = text.lower()
+    return any(marker in lowered for marker in _REFUSAL_MARKERS)
+
+
 def _generate_body(candidate: dict, confirmed_type: str, voice_ref: str, positioning: str) -> str:
     template = POST_PROMPT if confirmed_type == "post" else ARTICLE_PROMPT
     prompt = template.format(
@@ -539,9 +572,18 @@ def _generate_body(candidate: dict, confirmed_type: str, voice_ref: str, positio
         max_tokens=1800,
         messages=[{"role": "user", "content": prompt}],
     )
-    return "".join(
+    body = "".join(
         block.text for block in response.content if block.type == "text"
     ).strip()
+
+    if _looks_like_refusal(body) or len(body) < 100:
+        raise RuntimeError(
+            "Draft generation returned non-content output (likely declined "
+            "-- often because the topic doesn't genuinely fit the content "
+            f"pillars) instead of a usable draft: {body[:200]!r}..."
+        )
+
+    return body
 
 
 def generate_draft_package(candidate: dict, confirmed_type: str) -> dict:
@@ -701,9 +743,18 @@ def _generate_carousel_slides(candidate: dict, voice_ref: str, positioning: str)
         max_tokens=1800,
         messages=[{"role": "user", "content": prompt}],
     )
-    return "".join(
+    slides_text = "".join(
         block.text for block in response.content if block.type == "text"
     ).strip()
+
+    if "SLIDE 1" not in slides_text.upper() or _looks_like_refusal(slides_text):
+        raise RuntimeError(
+            "Carousel generation returned non-slide-formatted output "
+            "(likely declined -- often because the topic doesn't "
+            f"genuinely fit the content pillars): {slides_text[:200]!r}..."
+        )
+
+    return slides_text
 
 
 def generate_carousel_package(candidate: dict) -> dict:

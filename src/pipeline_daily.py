@@ -46,11 +46,16 @@ def run():
     classified = classifier.classify_batch(fresh_items)
     print(f"[pipeline] {len(classified)} items classified")
 
-    qualifying = [item for item in classified if item["confidence"] >= MIN_CONFIDENCE]
+    qualifying = [
+        item for item in classified
+        if item["confidence"] >= MIN_CONFIDENCE and item.get("pillar_fit", True)
+    ]
     qualifying.sort(key=lambda item: item["confidence"], reverse=True)
     top_items = qualifying[:MAX_CANDIDATES_PER_DAY]
+    off_pillar_count = sum(1 for item in classified if not item.get("pillar_fit", True))
     print(
-        f"[pipeline] {len(qualifying)} item(s) above confidence {MIN_CONFIDENCE}, "
+        f"[pipeline] {off_pillar_count} item(s) dropped as off-pillar, "
+        f"{len(qualifying)} qualifying above confidence {MIN_CONFIDENCE}, "
         f"surfacing top {len(top_items)} (cap {MAX_CANDIDATES_PER_DAY})"
     )
 
