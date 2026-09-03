@@ -176,6 +176,83 @@ def do_draft(chat_id, candidate_id, requested_type):
         )
 
 
+def do_carousel_draft(chat_id, candidate_id):
+    """/carousel -- generates a document/carousel-post package (5-7 slides
+    + a cover-visual brief). Same manual-bridge pattern as articles:
+    LinkedIn's document-post upload has no reliable standard-tier API path,
+    so this hands Himanshu copy-paste-ready slide text to assemble in Canva
+    and upload himself. Marked delivered_manual immediately -- there's no
+    further API step to queue or publish, unlike posts/articles."""
+    candidate = state_store.get_candidate(candidate_id)
+
+    if not candidate:
+        reply(chat_id, "Candidate not found.")
+        return
+
+    if candidate.get("status") in ("published", "delivered_manual"):
+        reply(chat_id, "This candidate has already been handled.")
+        return
+
+    reply(chat_id, "Writing carousel/document post draft for review...")
+
+    state_store.mark_candidate_confirmed(candidate_id, "carousel")
+
+    package = writer.generate_carousel_package(candidate)
+    slides_text = package["draft_text"]
+    hashtags = package.get("hashtags", "")
+    image_brief = package["image_brief"]
+
+    draft_text = f"{slides_text}\n\n{hashtags}" if hashtags else slides_text
+    draft_id = state_store.add_draft(
+        candidate_id, "carousel", draft_text, image_brief=image_brief,
+    )
+
+    image_link = writer.build_image_search_link(image_brief) if image_brief else ""
+
+    reply(
+        chat_id,
+        f"Draft #{draft_id} (carousel/document post):\n\n{draft_text}\n\n"
+        f"---\n"
+        f"Suggested visual style ({writer.CAROUSEL_IMAGE_SPEC}):\n"
+        f"Keywords: {image_brief}\n"
+        + (f"Quick search: {image_link}\n" if image_link else "")
+        + f"\n---\n"
+        f"Document posts need a PDF upload from LinkedIn's native composer "
+        f"-- build the slides in Canva using the text above (a few "
+        f"minutes), export as PDF, then post it as a 'Document' directly "
+        f"on LinkedIn.",
+    )
+
+    state_store.mark_draft_delivered_manual(draft_id)
+    state_store.mark_candidate_delivered_manual(candidate_id)
+
+
+def do_comment_draft(chat_id, post_text):
+    """/commenton <pasted post text> -- the safe, manual-in-the-loop version
+    of a 'suggest posts to comment on' digest. Standard-tier LinkedIn apps
+    have no API access to read other people's feed content, so this can't
+    scan LinkedIn for you -- but once you're already looking at a post,
+    this drafts a genuine, specific comment in Himanshu's voice for you to
+    paste yourself (LinkedIn's API also doesn't support posting comments as
+    you on other people's posts, same ceiling as elsewhere in this repo)."""
+    if not post_text.strip():
+        reply(chat_id, "Usage: /commenton <paste the LinkedIn post text you want to comment on>")
+        return
+
+    reply(chat_id, "Drafting a comment...")
+    try:
+        comment = writer.generate_comment(post_text)
+        reply(
+            chat_id,
+            f"Suggested comment:\n\n{comment}\n\n"
+            f"(paste this manually under their post -- LinkedIn's API "
+            f"doesn't support commenting as you on other people's posts)",
+        )
+    except Exception as e:
+        print("generate_comment failed:", e)
+        reply(chat_id, f"Error generating comment:\n{e}")
+
+
 def do_publish(chat_id, draft_id):
     """/publish QUEUES the draft for the next matching scheduled slot
     (morning for posts, night for articles) instead of publishing
@@ -351,23 +428,38 @@ def handle_command(chat_id, text):
             reply(
                 chat_id,
                 "Usage:\n/post <candidate_id>\n/article <candidate_id>\n"
+                "/carousel <candidate_id> (document/PDF-carousel post -- "
+                "highest-engagement format, delivered as a copy-paste "
+                "package for you to build in Canva)\n"
                 "/confirm <candidate_id>\n/skip <candidate_id>\n"
                 "/publish [draft_id] (queue for next scheduled slot -- id "
                 "optional, defaults to your latest pending draft)\n"
                 "/publishnow [draft_id] (publish immediately -- id optional; "
                 "posts go live via API, articles are delivered to you to "
                 "paste into LinkedIn's Articles tab)\n"
-                "/discard [draft_id] (id optional)",
+                "/discard [draft_id] (id optional)\n"
+                "/commenton <paste a post's text> (drafts a genuine comment "
+                "in your voice for you to paste manually)",
             )
             return
 
         cmd = parts[0].lower()
 
-        if cmd not in ("/confirm", "/post", "/article", "/skip", "/publish", "/publishnow", "/discard"):
+        if cmd not in (
+            "/confirm", "/post", "/article", "/carousel", "/skip",
+            "/publish", "/publishnow", "/discard", "/commenton",
+        ):
             reply(chat_id, "Unknown command.")
             return
 
         state_store.init_db()
+
+        # /commenton takes free-text (a pasted post), not a numeric id --
+        # handle it before the id-parsing paths below.
+        if cmd == "/commenton":
+            post_text = text.strip()[len(parts[0]):].strip()
+            do_comment_draft(chat_id, post_text)
+            return
 
         # Draft-scoped commands: fall back to "the most recent draft still
         # awaiting a decision" when no id is given. Candidates (/post,
@@ -411,6 +503,10 @@ def handle_command(chat_id, text):
 
         if cmd in ("/post", "/article", "/confirm"):
             do_draft(chat_id, entity_id, cmd.replace("/", ""))
+            return
+
+        if cmd == "/carousel":
+            do_carousel_draft(chat_id, entity_id)
             return
 
     except Exception as e:
