@@ -1,0 +1,33 @@
+name: Golden Hour Engagement Reminder
+
+# Nudges you ~45 min after the morning post slot (9:00 AM IST) to reply to
+# comments -- LinkedIn's 2026 algorithm samples early engagement (first
+# 60-90 min) to decide whether to expand distribution, and comment replies
+# carry far more ranking weight than likes. Only fires if a post actually
+# published today (see src/engagement_reminder.py).
+
+on:
+  schedule:
+    - cron: "15 4 * * *"   # 9:45 AM IST
+  workflow_dispatch: {}
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Send golden-hour nudge if a post went out today
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python -m src.engagement_reminder
