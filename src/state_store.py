@@ -100,7 +100,7 @@ def init_db():
         existing_cols = {
             row[1] for row in client.execute("PRAGMA table_info(drafts)").rows
         }
-        for col_name, col_type in (("title", "TEXT"), ("image_brief", "TEXT"), ("teaser_post", "TEXT")):
+        for col_name, col_type in (("title", "TEXT"), ("image_brief", "TEXT"), ("teaser_post", "TEXT"), ("published_at", "TEXT")):
             if col_name not in existing_cols:
                 client.execute(f"ALTER TABLE drafts ADD COLUMN {col_name} {col_type}")
 
@@ -200,9 +200,23 @@ def get_draft(draft_id: int):
 def mark_draft_published(draft_id: int, post_urn: str):
     with get_client() as client:
         client.execute(
-            "UPDATE drafts SET status = 'published', linkedin_post_urn = ? WHERE id = ?",
-            [post_urn, draft_id],
+            "UPDATE drafts SET status = 'published', linkedin_post_urn = ?, published_at = ? WHERE id = ?",
+            [post_urn, datetime.now(timezone.utc).isoformat(), draft_id],
         )
+
+
+def get_most_recent_published_post():
+    """Most recent published draft of type 'post' (auto-published via the
+    LinkedIn API -- articles/carousels are manual-delivery, so 'published'
+    timing doesn't apply the same way to them). Used by the golden-hour
+    engagement reminder to check whether something actually went out today
+    before nudging -- no point pinging you on a day nothing published."""
+    with get_client() as client:
+        rs = client.execute(
+            "SELECT * FROM drafts WHERE status = 'published' AND draft_type = 'post' "
+            "ORDER BY published_at DESC LIMIT 1"
+        )
+        return _row_to_dict(rs, rs.rows[0]) if rs.rows else None
 
 
 def mark_draft_rejected(draft_id: int):

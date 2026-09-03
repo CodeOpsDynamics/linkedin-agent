@@ -23,6 +23,7 @@ paste into LinkedIn's Articles editor himself -- see telegram_webhook.py and
 scheduled_publish.py for that hand-off.
 """
 import os
+import json
 from pathlib import Path
 from urllib.parse import quote as url_quote
 from concurrent.futures import ThreadPoolExecutor
@@ -223,6 +224,57 @@ Output only the post body text. No hashtags, nothing else.
 """
 
 
+CAROUSEL_SLIDE_COUNT = "5 to 7"
+
+# Document posts (PDF carousels) are the highest-engagement LinkedIn format
+# in 2026 (~6.6% engagement vs ~2% for plain text posts) -- this is a
+# DIFFERENT deliverable shape than post/article: instead of one body of
+# prose, it's a title slide + several short skimmable slides + a normal
+# post caption that accompanies the uploaded PDF in the feed. There's no
+# LinkedIn API for uploading a document-post PDF on any individual-dev
+# tier (same permanent wall as native Articles -- see README), so like
+# articles, this is delivered as a copy-paste-ready package: Himanshu drops
+# the slide text into Canva/a slide template, exports as PDF, and uploads
+# it manually as a LinkedIn document post with the generated caption.
+CAROUSEL_PROMPT = """You are creating the content for a LinkedIn DOCUMENT POST
+(PDF carousel) for Himanshu Rai, a Senior DevOps/Platform Engineer at
+Barclays, with the goal of building visibility toward engineering-
+leadership/management roles. Document posts are a highly visual, skimmable
+format -- NOT a text post split into pieces. Each slide must stand alone
+and be readable in about 3 seconds.
+
+Style reference (match tone, not content):
+{voice_ref}
+
+Positioning strategy (pillars + keywords to draw from):
+{positioning}
+""" + ALGORITHM_RULES + MANAGEMENT_ANGLE_RULE + f"""
+Output ONLY valid JSON, no markdown fences, no preamble, in exactly this
+shape:
+{{{{"title": "...", "slides": ["...", "..."], "caption": "..."}}}}
+
+- "title": the title slide's headline. Short, punchy, states the core claim
+  or question directly -- this is what makes someone stop scrolling and tap
+  into the document.
+- "slides": {CAROUSEL_SLIDE_COUNT} slide bodies that follow the title slide,
+  in order. Each entry is what goes on ONE slide -- 1 to 3 short lines,
+  never a paragraph. Build one clear idea per slide, in a logical sequence
+  (e.g. problem -> cause -> insight -> implication -> takeaway). The last
+  slide should land the closing point of view, not trail off.
+- "caption": the normal LinkedIn post text that goes in the feed alongside
+  the uploaded document (this is a real post caption, not a slide) --
+  follow the algorithm rules above (no raw links, no engagement-bait
+  closer, genuine closing question). Keep it short -- its job is to make
+  someone open the document, not repeat its content. Do NOT include
+  hashtags in the caption -- they're generated separately.
+
+Item: {{title}}
+Summary: {{summary}}
+Source: {{source}}
+Classification reasoning: {{reasoning}}
+"""
+
+
 def load_voice_reference():
     if VOICE_REF_PATH.exists():
         return VOICE_REF_PATH.read_text()
@@ -297,11 +349,13 @@ def generate_article_title(candidate: dict) -> str:
     return candidate.get("title", "")
 
 
-def generate_image_brief(candidate: dict) -> str:
-    """Dedicated small call, articles only -- returns comma-separated visual
-    search keywords for a cover image. No image is generated or fetched
-    (keeps the stack API-key-free for this step); Himanshu picks one
-    manually via the constructed search link or Canva."""
+def generate_image_brief(candidate: dict, image_spec: str = ARTICLE_IMAGE_SPEC) -> str:
+    """Dedicated small call -- returns comma-separated visual search
+    keywords for a cover image. No image is generated or fetched (keeps the
+    stack API-key-free for this step); Himanshu picks one manually via the
+    constructed search link or Canva. image_spec defaults to the article
+    cover-image dimensions but callers (e.g. carousel drafts) can pass a
+    different spec -- see CAROUSEL_IMAGE_SPEC."""
     try:
         response = client.messages.create(
             model="claude-sonnet-4-6",
@@ -311,7 +365,7 @@ def generate_image_brief(candidate: dict) -> str:
                 "content": IMAGE_BRIEF_PROMPT.format(
                     title=candidate["title"],
                     summary=candidate.get("summary", ""),
-                    image_spec=ARTICLE_IMAGE_SPEC,
+                    image_spec=image_spec,
                 ),
             }],
         )
@@ -368,6 +422,66 @@ def build_image_search_link(image_brief: str) -> str:
     if not first_phrase:
         return ""
     return f"https://unsplash.com/s/photos/{url_quote(first_phrase)}"
+
+
+def generate_carousel_package(candidate: dict) -> dict:
+    """Dedicated call for the document-post (PDF carousel) format --
+    highest-engagement LinkedIn format as of 2026 data, but a genuinely
+    different shape than post/article (title slide + short standalone
+    slides + a normal caption), so it gets its own prompt and its own
+    JSON-structured response rather than being squeezed into
+    generate_draft_package's body/hashtags shape.
+
+    Returns {"title": ..., "slides": [...], "caption": ...}. Hashtags are
+    NOT included here -- append generate_hashtags()'s output to "caption"
+    the same way generate_draft_package does for posts, so the hashtag
+    quality-check logic stays in one place.
+
+    No PDF/image is generated here (keeps the stack API-key-free for this
+    step, same reasoning as generate_image_brief) -- this is the raw
+    content Himanshu drops into Canva/a slide template himself before
+    exporting and uploading manually. There's no LinkedIn API for
+    uploading a document-post PDF on any individual-dev tier, so like
+    articles, this always ends as a manual last step, not an API publish.
+    """
+    voice_ref = load_voice_reference()
+    positioning = load_positioning_strategy()
+
+    prompt = CAROUSEL_PROMPT.format(
+        voice_ref=voice_ref,
+        positioning=positioning,
+        title=candidate["title"],
+        summary=candidate.get("summary", ""),
+        source=candidate.get("source", ""),
+        reasoning=candidate.get("reasoning", ""),
+    )
+
+    response = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=1200,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    raw_text = "".join(
+        block.text for block in response.content if block.type == "text"
+    ).strip()
+
+    try:
+        parsed = json.loads(raw_text)
+    except json.JSONDecodeError:
+        # fall back safe default if the model wraps in fences despite
+        # instructions -- same pattern as classifier.py
+        cleaned = raw_text.strip("`").replace("json\n", "", 1)
+        parsed = json.loads(cleaned)
+
+    slides = parsed.get("slides", [])
+    if not isinstance(slides, list):
+        slides = []
+
+    return {
+        "title": parsed.get("title", candidate.get("title", "")),
+        "slides": slides,
+        "caption": parsed.get("caption", ""),
+    }
 
 
 def condense_body(body: str, char_limit: int) -> str:
@@ -511,3 +625,161 @@ def write_draft(candidate: dict, confirmed_type: str) -> str:
     the local CLI bridge script, which has no 60-second constraint). Thin
     wrapper over generate_draft_package so both paths share one code path."""
     return generate_draft_package(candidate, confirmed_type)["draft_text"]
+
+
+# ---------------------------------------------------------------------------
+# Carousel / document posts -- Phase 6.
+#
+# Document posts (PDF carousels) are LinkedIn's highest-engagement format
+# in 2026 (~6.6% engagement vs ~2% for plain text, per 2026 platform data).
+# But same platform ceiling as native Articles: there's no reliable
+# standard-tier API path to upload a PDF/multi-image document post. So this
+# follows the exact same manual-bridge pattern already used for articles --
+# generate copy-paste-ready slide text + a cover-visual brief, hand the
+# whole package to Himanshu via Telegram, and he assembles the actual PDF
+# in Canva (a few minutes) and posts it as a "Document" himself. This is
+# NOT wired to auto-publish -- don't assume an API call can do this step.
+# ---------------------------------------------------------------------------
+
+# LinkedIn's recommended document-post image dimensions (2026) -- square or
+# 4:5 portrait reads best in the native carousel viewer.
+CAROUSEL_IMAGE_SPEC = "1080x1080px (square) or 1080x1350px (4:5 portrait)"
+
+CAROUSEL_PROMPT = """You are drafting a LinkedIn DOCUMENT POST (a PDF
+carousel, 5-7 slides) for Himanshu Rai, a Senior DevOps/Platform Engineer at
+Barclays, with the goal of building visibility toward engineering-
+leadership/management roles. Document posts get the highest engagement of
+any LinkedIn format in 2026 -- but only when each slide earns the swipe to
+the next one.
+
+Style reference (match tone, not content):
+{voice_ref}
+
+Positioning strategy (pillars + keywords to draw from):
+{positioning}
+""" + ALGORITHM_RULES + MANAGEMENT_ANGLE_RULE + """
+Structure:
+- Slide 1 (hook): a bold claim or sharp question, big and short -- this is
+  the ONLY slide most people see before deciding whether to swipe, so it
+  has to work standalone. No "in this post I'll cover..." setup.
+- Slides 2 through (second-to-last): one clear idea per slide, short punchy
+  lines, not paragraphs -- this is read as a slide, not an article. Each
+  slide should make someone want the next one.
+- Final slide: a closing takeaway + the same genuine-question closer rule
+  used for posts (not engagement bait).
+
+Output format -- plain text, one slide per block, EXACTLY like this, with
+nothing else outside the slide blocks:
+SLIDE 1:
+<text>
+
+SLIDE 2:
+<text>
+
+(continue through the final slide)
+
+No hashtags in slide text -- generated separately.
+
+Item: {title}
+Summary: {summary}
+Source: {source}
+Classification reasoning: {reasoning}
+"""
+
+
+def _generate_carousel_slides(candidate: dict, voice_ref: str, positioning: str) -> str:
+    prompt = CAROUSEL_PROMPT.format(
+        voice_ref=voice_ref,
+        positioning=positioning,
+        title=candidate["title"],
+        summary=candidate.get("summary", ""),
+        source=candidate.get("source", ""),
+        reasoning=candidate.get("reasoning", ""),
+    )
+    response = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=1800,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return "".join(
+        block.text for block in response.content if block.type == "text"
+    ).strip()
+
+
+def generate_carousel_package(candidate: dict) -> dict:
+    """Runs slide generation, hashtags, and the cover-visual brief
+    concurrently (same ThreadPoolExecutor pattern as generate_draft_package,
+    for the same wall-clock reason). Returns:
+    {"draft_text": <slide blocks>, "image_brief": ..., "hashtags": ...}
+    -- draft_text is the slide copy ONLY; the caller decides whether/how to
+    append hashtags when assembling the final Telegram message, since
+    hashtags belong on the LinkedIn post caption that accompanies the
+    uploaded PDF, not inside the slides themselves.
+    """
+    voice_ref = load_voice_reference()
+    positioning = load_positioning_strategy()
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        slides_future = pool.submit(_generate_carousel_slides, candidate, voice_ref, positioning)
+        hashtag_future = pool.submit(generate_hashtags, candidate["title"], positioning)
+        visual_future = pool.submit(generate_image_brief, candidate, CAROUSEL_IMAGE_SPEC)
+
+        slides_text = slides_future.result()
+        hashtags = hashtag_future.result()
+        visual_brief = visual_future.result()
+
+    return {
+        "draft_text": slides_text,
+        "image_brief": visual_brief,
+        "hashtags": hashtags,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Manual comment-draft bridge -- Phase 6.
+#
+# A live "scan LinkedIn's feed and suggest posts to comment on" digest was
+# considered, but hits the exact same platform ceiling as auto-publishing
+# comments and Articles: standard-tier LinkedIn apps have no API access to
+# read other people's feed content at all (that's a Marketing Developer
+# Platform capability, not available here). So instead of a fake feature
+# that can't actually scan LinkedIn, this is the honest, safe version:
+# Himanshu pastes the text of a post he's already looking at, and gets a
+# genuine, specific comment drafted in his voice -- same manual-in-the-loop
+# spirit as the article/carousel packages above.
+# ---------------------------------------------------------------------------
+
+COMMENT_PROMPT = """Himanshu Rai (Senior DevOps/Platform Engineer at
+Barclays, building toward engineering-leadership roles) wants to leave a
+genuine, substantive comment on someone else's LinkedIn post below -- not a
+generic "Great post!" reply. The comment should add something real: a
+related experience, a respectful pushback, an extending idea, or a specific
+question -- something that shows he actually read and thought about it.
+
+Style reference (match tone, not content):
+{voice_ref}
+
+Keep it to 2-4 sentences, no hashtags, no self-promotion, and no forced
+management/business-school language -- this is a peer commenting on a
+peer's post, not a pitch.
+
+Their post:
+{post_text}
+
+Output only the comment text.
+"""
+
+
+def generate_comment(post_text: str) -> str:
+    voice_ref = load_voice_reference()
+    response = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=300,
+        messages=[{
+            "role": "user",
+            "content": COMMENT_PROMPT.format(voice_ref=voice_ref, post_text=post_text),
+        }],
+    )
+    return "".join(
+        block.text for block in response.content if block.type == "text"
+    ).strip()
