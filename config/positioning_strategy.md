@@ -29,6 +29,22 @@ Staying inside 2-3 consistent pillars is what builds that signal over weeks.
 3. **Sustainability / circular economy in tech** -- e-waste, EPR compliance,
    PunarChakra-adjacent themes. Smaller pillar, but ties your venture work
    into your professional brand coherently.
+4. **New tech vs. legacy tech, with a management lens** -- rigorous,
+   fact-checked comparisons of an emerging technology against the
+   established/legacy option it's supposedly replacing: what's genuinely
+   new, why the legacy option still holds real market share despite the
+   hype cycle, and the actual adoption trade-off (cost, risk, switching
+   cost, organizational readiness) underneath it. This pillar carries the
+   HIGHEST accuracy bar of the four -- claims about specific tools,
+   versions, or benchmarks must be verified via live search at generation
+   time (see writer.py's generate_tech_eval_package), not asserted from
+   memory. No hype-chasing: if a claimed capability can't be verified, the
+   piece should say so or leave it out entirely, never fabricate a
+   specific to sound more authoritative. A genuine management lesson
+   (why organizations under- or over-adopt, technical debt trade-offs,
+   change management) should be woven in naturally per the same
+   MANAGEMENT_ANGLE_RULE as the other pillars -- real insight, not a
+   framework citation.
 
 ## Natural keyword presence (never force these -- they should read like they
 belong, not like SEO stuffing)

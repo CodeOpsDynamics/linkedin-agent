@@ -14,6 +14,17 @@ rss_feeds:
     url: "https://stratechery.com/feed/"
   - name: "MIT Sloan Management Review"
     url: "https://sloanreview.mit.edu/feed/"
+  # Added for Pillar 4 (new tech vs. legacy tech) -- the business-strategy
+  # feeds above rarely cover specific new tool/product launches in enough
+  # technical depth to compare against an incumbent. These are for
+  # DISCOVERY only -- writer.py still verifies specifics via live search
+  # before writing anything, never trusts a headline/summary at face value.
+  - name: "TechCrunch"
+    url: "https://techcrunch.com/feed/"
+  - name: "The Verge - Tech"
+    url: "https://www.theverge.com/rss/index.xml"
+  - name: "Ars Technica"
+    url: "https://feeds.arstechnica.com/arstechnica/index"
 
 # NewsAPI.org (or similar) query terms -- run as separate calls, not one combined query
 news_api_queries:
@@ -22,6 +33,8 @@ news_api_queries:
   - "global trade policy business impact"
   - "regulatory change industry"
   - "circular economy e-waste policy"   # ties to PunarChakra research interest
+  - "new AI model launch"               # Pillar 4 discovery
+  - "legacy system enterprise migration" # Pillar 4 discovery -- the "why legacy persists" half
 
 # Keywords used to nudge the Impact Classifier -- topics that historically
 # turn out to be "huge change" (article-tier) rather than routine news.
