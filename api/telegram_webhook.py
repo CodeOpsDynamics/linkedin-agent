@@ -195,13 +195,118 @@ def do_draft(chat_id, candidate_id, requested_type):
         )
 
 
+def do_publish_carousel_now(chat_id, draft, candidate):
+    """Renders the stored slide text into an actual PDF, uploads it via
+    LinkedIn's Documents API, and publishes a document post referencing
+    it -- confirmed reachable on this app's tier via
+    src/test_document_upload.py. Caption = the hook (slide 1) + hashtags,
+    since document posts show a short caption alongside the swipeable PDF
+    rather than the full text."""
+    from src.carousel_pdf import parse_slides
+
+    draft_id = draft["id"]
+
+    try:
+        slides, hashtags = parse_slides(draft["draft_text"])
+    except ValueError as e:
+        reply(chat_id, f"Couldn't parse this draft into slides:\n{e}")
+        return
+
+    caption = slides[0]
+    if hashtags:
+        caption = f"{caption}\n\n{hashtags}"
+
+    document_title = candidate["title"] if candidate else "Document"
+
+    reply(chat_id, "Rendering the PDF and publishing to LinkedIn...")
+
+    try:
+        token = linkedin_publish.get_access_token()
+        urn = linkedin_publish.publish_carousel(
+            slides, caption, document_title, access_token=token,
+        )
+    except Exception as e:
+        print("publish_carousel failed:", e)
+        reply(
+            chat_id,
+            f"Carousel publish failed:\n{e}\n\n"
+            f"The draft is still saved -- try /publishnow {draft_id} again, "
+            f"or /discard {draft_id} if you'd rather drop it.",
+        )
+        return
+
+    state_store.mark_draft_published(draft_id, urn)
+    if candidate:
+        state_store.mark_candidate_published(draft["candidate_id"])
+
+    reply(chat_id, f"Published!\n{post_url_from_urn(urn)}")
+
+
+def do_newtech_draft(chat_id, candidate_id):
+    """/newtech -- Pillar 4: fact-checked new-tech-vs-legacy-tech carousel,
+    generated with Anthropic's hosted web_search tool enabled so claims
+    about specific tools/versions/benchmarks are verified live rather than
+    pulled from Claude's training data (which can be stale for anything
+    genuinely new). Reuses the exact same draft_type='carousel' storage,
+    PDF rendering, and Documents-API publish path as /carousel -- only the
+    generation step differs."""
+    candidate = state_store.get_candidate(candidate_id)
+
+    if not candidate:
+        reply(chat_id, "Candidate not found.")
+        return
+
+    if candidate.get("status") in ("published", "delivered_manual"):
+        reply(chat_id, "This candidate has already been handled.")
+        return
+
+    reply(chat_id, "Researching and writing a fact-checked new-tech-vs-legacy-tech draft (this one takes longer -- it's verifying claims via live search)...")
+
+    try:
+        package = writer.generate_tech_eval_package(candidate)
+    except Exception as e:
+        print("generate_tech_eval_package failed:", e)
+        reply(
+            chat_id,
+            f"Couldn't generate a fact-checked draft for this one:\n{e}\n\n"
+            f"This can mean the topic doesn't fit, OR that search results "
+            f"were too thin/conflicting to write something verified -- "
+            f"either way, better to skip than publish something shaky. "
+            f"Try /skip {candidate_id}, or /post / /article for a "
+            f"different angle.",
+        )
+        return
+
+    state_store.mark_candidate_confirmed(candidate_id, "carousel")
+
+    slides_text = package["draft_text"]
+    hashtags = package.get("hashtags", "")
+    image_brief = package["image_brief"]
+
+    draft_text = f"{slides_text}\n\n{hashtags}" if hashtags else slides_text
+    draft_id = state_store.add_draft(
+        candidate_id, "carousel", draft_text, image_brief=image_brief,
+    )
+
+    reply(
+        chat_id,
+        f"Draft #{draft_id} (new-tech-vs-legacy, fact-checked via live search):\n\n{draft_text}\n\n"
+        f"---\n"
+        f"Read this one carefully before publishing -- web search reduces "
+        f"hallucination risk but doesn't eliminate it. If any specific "
+        f"claim looks off, /discard and regenerate rather than publish it.\n"
+        f"Reply /publishnow {draft_id} to render + publish.\n"
+        f"Reply /discard {draft_id} to cancel this draft.",
+    )
+
+
 def do_carousel_draft(chat_id, candidate_id):
     """/carousel -- generates a document/carousel-post package (5-7 slides
-    + a cover-visual brief). Same manual-bridge pattern as articles:
-    LinkedIn's document-post upload has no reliable standard-tier API path,
-    so this hands Himanshu copy-paste-ready slide text to assemble in Canva
-    and upload himself. Marked delivered_manual immediately -- there's no
-    further API step to queue or publish, unlike posts/articles."""
+    + a cover-visual brief) and saves it as a normal reviewable draft, same
+    flow as /post and /article. Auto-publish is real for this format
+    (confirmed via src/test_document_upload.py, 2026) -- /publishnow
+    renders an actual PDF from the slide text and uploads it via LinkedIn's
+    Documents API, no manual Canva step required."""
     candidate = state_store.get_candidate(candidate_id)
 
     if not candidate:
@@ -244,18 +349,17 @@ def do_carousel_draft(chat_id, candidate_id):
         chat_id,
         f"Draft #{draft_id} (carousel/document post):\n\n{draft_text}\n\n"
         f"---\n"
-        f"Suggested visual style ({writer.CAROUSEL_IMAGE_SPEC}):\n"
-        f"Keywords: {image_brief}\n"
+        f"Cover visual keywords ({writer.CAROUSEL_IMAGE_SPEC}) -- for your "
+        f"own reference, the slides themselves are self-contained:\n"
+        f"{image_brief}\n"
         + (f"Quick search: {image_link}\n" if image_link else "")
         + f"\n---\n"
-        f"Document posts need a PDF upload from LinkedIn's native composer "
-        f"-- build the slides in Canva using the text above (a few "
-        f"minutes), export as PDF, then post it as a 'Document' directly "
-        f"on LinkedIn.",
+        f"Reply /publishnow {draft_id} to render this into a PDF and post "
+        f"it live right now.\n"
+        f"Reply /discard {draft_id} to cancel this draft.\n"
+        f"(Scheduled queuing via /publish isn't wired up for carousels yet "
+        f"-- use /publishnow when you're ready.)",
     )
-
-    state_store.mark_draft_delivered_manual(draft_id)
-    state_store.mark_candidate_delivered_manual(candidate_id)
 
 
 def do_comment_draft(chat_id, post_text):
@@ -319,6 +423,15 @@ def do_publish(chat_id, draft_id):
     candidate = state_store.get_candidate(draft["candidate_id"])
     if candidate and candidate.get("status") in ("published", "delivered_manual"):
         reply(chat_id, "This candidate was already handled (via a different draft). Not queuing.")
+        return
+
+    if draft["draft_type"] == "carousel":
+        reply(
+            chat_id,
+            f"Scheduled queuing isn't wired up for carousels yet -- there's "
+            f"no dedicated slot for this format. Use /publishnow {draft_id} "
+            f"to publish it immediately instead.",
+        )
         return
 
     state_store.queue_draft(draft_id)
@@ -414,6 +527,10 @@ def do_publish_now(chat_id, draft_id):
         deliver_article_now(chat_id, draft, candidate)
         return
 
+    if draft["draft_type"] == "carousel":
+        do_publish_carousel_now(chat_id, draft, candidate)
+        return
+
     token = linkedin_publish.get_access_token()
 
     urn = linkedin_publish.publish_post(draft["draft_text"], access_token=token)
@@ -460,8 +577,10 @@ def handle_command(chat_id, text):
                 chat_id,
                 "Usage:\n/post <candidate_id>\n/article <candidate_id>\n"
                 "/carousel <candidate_id> (document/PDF-carousel post -- "
-                "highest-engagement format, delivered as a copy-paste "
-                "package for you to build in Canva)\n"
+                "highest-engagement format, auto-published via LinkedIn's "
+                "Documents API on /publishnow, no manual step needed)\n"
+                "/newtech <candidate_id> (Pillar 4: new-tech-vs-legacy-tech "
+                "carousel, fact-checked via live web search)\n"
                 "/confirm <candidate_id>\n/skip <candidate_id>\n"
                 "/publish [draft_id] (queue for next scheduled slot -- id "
                 "optional, defaults to your latest pending draft)\n"
@@ -477,7 +596,7 @@ def handle_command(chat_id, text):
         cmd = parts[0].lower()
 
         if cmd not in (
-            "/confirm", "/post", "/article", "/carousel", "/skip",
+            "/confirm", "/post", "/article", "/carousel", "/newtech", "/skip",
             "/publish", "/publishnow", "/discard", "/commenton",
         ):
             reply(chat_id, "Unknown command.")
@@ -538,6 +657,10 @@ def handle_command(chat_id, text):
 
         if cmd == "/carousel":
             do_carousel_draft(chat_id, entity_id)
+            return
+
+        if cmd == "/newtech":
+            do_newtech_draft(chat_id, entity_id)
             return
 
     except Exception as e:
