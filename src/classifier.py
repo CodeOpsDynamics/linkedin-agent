@@ -68,7 +68,7 @@ why it still doesn't genuinely belong, rather than softening it.
 Respond ONLY with JSON, no markdown fences, no preamble:
 {{"classification": "post" | "article", "confidence": 0.0-1.0,
   "pillar_fit": true | false,
-  "pillar": "platform_engineering" | "tech_business_bridge" | "sustainability" | "none",
+  "pillar": "platform_engineering" | "tech_business_bridge" | "sustainability" | "new_tech_vs_legacy" | "none",
   "reasoning": "..."}}
 
 Item title: {title}

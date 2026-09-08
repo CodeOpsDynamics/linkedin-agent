@@ -834,3 +834,133 @@ def generate_comment(post_text: str) -> str:
     return "".join(
         block.text for block in response.content if block.type == "text"
     ).strip()
+
+
+# ---------------------------------------------------------------------------
+# Pillar 4: new tech vs. legacy tech, fact-checked -- Phase 7.
+#
+# This pillar carries a much higher accuracy bar than the others: a piece
+# comparing a brand-new tool against the legacy option it's supposedly
+# replacing is worthless (or actively embarrassing) if it gets specifics
+# wrong -- version numbers, release dates, benchmark claims, what a tool
+# can/can't actually do. Claude's own training data can be stale for
+# anything genuinely new, so this is the ONE generation path in the whole
+# pipeline that enables Anthropic's hosted web_search tool -- the model
+# verifies specifics via a live search before writing, rather than
+# generating from memory like every other prompt in this file. Output
+# format matches the existing carousel SLIDE format so it flows through
+# the same PDF-rendering/publish pipeline (generate_carousel_package,
+# carousel_pdf.py, linkedin_publish.publish_carousel) unchanged.
+# ---------------------------------------------------------------------------
+
+TECH_EVAL_PROMPT = """You are drafting a LinkedIn DOCUMENT POST (a PDF
+carousel, 6-8 slides) for Himanshu Rai, a Senior DevOps/Platform Engineer at
+Barclays, comparing a NEW technology against the LEGACY/established
+technology it's supposedly replacing -- with the goal of building
+visibility toward engineering-leadership/management roles.
+
+THIS IS THE HIGHEST-ACCURACY PIECE IN THE PIPELINE. Use the web_search tool
+to verify every specific claim -- version numbers, release dates, named
+capabilities, benchmark or performance numbers, pricing, adoption
+statistics -- BEFORE writing about it. Rules, no exceptions:
+- If you cannot verify a specific claim via search, do NOT state it as fact.
+  Either search harder, phrase it as general/well-known knowledge only, or
+  leave the specific out entirely.
+- Never invent a version number, date, statistic, or named feature to sound
+  more concrete. A vaguer TRUE sentence beats a specific FALSE one.
+- If search results are thin, conflicting, or the topic is too new to have
+  reliable coverage, say that plainly in the piece rather than papering
+  over it with confident-sounding language.
+- Give BOTH sides real weight: what's genuinely new/better about the new
+  technology, AND why the legacy option still holds real ground (switching
+  cost, reliability track record, ecosystem lock-in, organizational
+  inertia, or genuine technical reasons it hasn't been fully displaced).
+  A piece that only hypes the new thing isn't an honest comparison.
+
+Style reference (match tone, not content):
+{voice_ref}
+
+Positioning strategy (pillars + keywords to draw from):
+{positioning}
+""" + ALGORITHM_RULES + MANAGEMENT_ANGLE_RULE + """
+Structure:
+- Slide 1 (hook): the real tension in one sharp line -- new tech's claim vs.
+  why the legacy option is still standing. No hype-chasing language.
+- Slides 2-3: what's genuinely new and verified about the new technology --
+  grounded in what you found via search, not general hype.
+- Slides 4-5: why the legacy technology still holds real market share --
+  the concrete, non-dismissive reasons (cost, risk, reliability, ecosystem,
+  switching cost, organizational readiness).
+- Slide 6: the honest trade-off -- when does the new tech genuinely make
+  sense to adopt, and when is sticking with the legacy option the sound
+  call, not the lazy one.
+- Final slide: closing takeaway + the same genuine-question closer rule as
+  other posts (not engagement bait).
+
+Output format -- plain text, one slide per block, EXACTLY like this, with
+nothing else outside the slide blocks:
+SLIDE 1:
+<text>
+
+SLIDE 2:
+<text>
+
+(continue through the final slide)
+
+No hashtags in slide text -- generated separately.
+
+New technology / legacy technology comparison item: {title}
+Summary: {summary}
+Source: {source}
+Classification reasoning: {reasoning}
+"""
+
+
+def _generate_tech_eval_slides(candidate: dict, voice_ref: str, positioning: str) -> str:
+    prompt = TECH_EVAL_PROMPT.format(
+        voice_ref=voice_ref,
+        positioning=positioning,
+        title=candidate["title"],
+        summary=candidate.get("summary", ""),
+        source=candidate.get("source", ""),
+        reasoning=candidate.get("reasoning", ""),
+    )
+    response = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=4000,
+        tools=[{"type": "web_search_20250305", "name": "web_search"}],
+        messages=[{"role": "user", "content": prompt}],
+    )
+    slides_text = "".join(
+        block.text for block in response.content if block.type == "text"
+    ).strip()
+
+    if "SLIDE 1" not in slides_text.upper() or _looks_like_refusal(slides_text):
+        raise RuntimeError(
+            "Tech-eval generation returned non-slide-formatted output "
+            "(likely declined, or search results were too thin to write "
+            f"a fact-checked piece): {slides_text[:200]!r}..."
+        )
+
+    return slides_text
+
+
+def generate_tech_eval_package(candidate: dict) -> dict:
+    """Same shape as generate_carousel_package -- runs slides (with live
+    search grounding), hashtags, and the cover-visual brief. NOT run
+    concurrently with the other two: web_search calls take meaningfully
+    longer and more unpredictably than a plain generation call, and this is
+    the one path in the pipeline where correctness matters more than
+    shaving a few seconds off wall-clock time."""
+    voice_ref = load_voice_reference()
+    positioning = load_positioning_strategy()
+
+    slides_text = _generate_tech_eval_slides(candidate, voice_ref, positioning)
+    hashtags = generate_hashtags(candidate["title"], positioning)
+    visual_brief = generate_image_brief(candidate, CAROUSEL_IMAGE_SPEC)
+
+    return {
+        "draft_text": slides_text,
+        "image_brief": visual_brief,
+        "hashtags": hashtags,
+    }
