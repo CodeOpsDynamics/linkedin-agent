@@ -260,7 +260,7 @@ def do_newtech_draft(chat_id, candidate_id):
         reply(chat_id, "This candidate has already been handled.")
         return
 
-    reply(chat_id, "Researching and writing a fact-checked new-tech-vs-legacy-tech draft (this one takes longer -- it's verifying claims via live search)...")
+    reply(chat_id, "Checking this is a genuine new-vs-legacy tech comparison, then researching...")
 
     try:
         package = writer.generate_tech_eval_package(candidate)
