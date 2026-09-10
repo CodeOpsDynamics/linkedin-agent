@@ -916,6 +916,56 @@ Classification reasoning: {reasoning}
 """
 
 
+TECH_FIT_CHECK_PROMPT = """Is this item genuinely a comparison between a NEW
+technology and an established/LEGACY technology it could plausibly replace
+-- e.g. a new AI model vs. an older one, a new framework/tool vs. an
+incumbent one, a new hardware/infra approach vs. the established approach?
+
+Regulatory news, policy changes, funding rounds, and general business
+stories are NOT a fit for this, even if they happen to mention a specific
+technology or company by name -- there has to be an actual new-vs-legacy
+technology comparison available to write about, not just a tech-adjacent
+headline.
+
+Respond with ONLY one word: YES or NO.
+
+Title: {title}
+Summary: {summary}
+"""
+
+
+def check_tech_eval_fit(candidate: dict) -> bool:
+    """Cheap, search-FREE gate that runs before the expensive web-search-
+    enabled generation call. Added after a real incident: a regulatory
+    story (state data-center power rules) got sent to generate_tech_eval_package,
+    which has no genuine new-vs-legacy comparison to make, so the model kept
+    searching for an angle that didn't exist -- burning search-tool cost and
+    wall-clock time (risking Vercel's 60s timeout) for nothing. This check
+    costs one tiny, search-free call (~10 output tokens) and fails fast
+    instead."""
+    try:
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=10,
+            messages=[{
+                "role": "user",
+                "content": TECH_FIT_CHECK_PROMPT.format(
+                    title=candidate["title"], summary=candidate.get("summary", ""),
+                ),
+            }],
+        )
+        answer = "".join(
+            b.text for b in response.content if b.type == "text"
+        ).strip().upper()
+        return answer.startswith("Y")
+    except Exception as e:
+        # Fail OPEN, not closed -- if the cheap check itself errors, don't
+        # block a possibly-good draft over an unrelated API hiccup. Costs
+        # nothing extra either way since the real gate is max_uses below.
+        print(f"[writer] WARN: tech-fit pre-check failed, proceeding anyway: {e}")
+        return True
+
+
 def _generate_tech_eval_slides(candidate: dict, voice_ref: str, positioning: str) -> str:
     prompt = TECH_EVAL_PROMPT.format(
         voice_ref=voice_ref,
@@ -927,8 +977,14 @@ def _generate_tech_eval_slides(candidate: dict, voice_ref: str, positioning: str
     )
     response = client.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=4000,
-        tools=[{"type": "web_search_20250305", "name": "web_search"}],
+        max_tokens=3000,
+        # max_uses hard-caps how many searches the model can run in this
+        # one call -- without it, a topic with a genuinely elusive or
+        # nonexistent comparison can cause the model to keep searching
+        # indefinitely, burning cost and risking Vercel's 60s timeout. 4 is
+        # enough for "new tech claim" + "legacy tech status" + 1-2
+        # follow-ups, not unlimited digging.
+        tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 4}],
         messages=[{"role": "user", "content": prompt}],
     )
     slides_text = "".join(
@@ -951,7 +1007,21 @@ def generate_tech_eval_package(candidate: dict) -> dict:
     concurrently with the other two: web_search calls take meaningfully
     longer and more unpredictably than a plain generation call, and this is
     the one path in the pipeline where correctness matters more than
-    shaving a few seconds off wall-clock time."""
+    shaving a few seconds off wall-clock time.
+
+    Gated by check_tech_eval_fit() first -- see that function's docstring
+    for why: this pillar's expensive search-enabled call should never run
+    on a topic that was never a genuine new-vs-legacy tech comparison to
+    begin with."""
+    if not check_tech_eval_fit(candidate):
+        raise RuntimeError(
+            "This doesn't look like a genuine new-tech-vs-legacy-tech "
+            "comparison -- regulatory/policy/business items don't fit "
+            "Pillar 4 even when they mention a technology by name. "
+            "Skipping before spending search budget on it. Try /post or "
+            "/article instead if the story is still worth covering."
+        )
+
     voice_ref = load_voice_reference()
     positioning = load_positioning_strategy()
 
