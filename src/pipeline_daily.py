@@ -107,8 +107,9 @@ def _format_ready_message(candidate_id: int, title: str, result: dict) -> str:
         image_brief = package.get("image_brief") or ""
         return (
             f"Today's carousel draft -- #{draft_id} (candidate #{candidate_id}): {title}\n\n"
-            f"{draft_text}\n\n---\nCover keywords: {image_brief}\n"
-            f"Reply /publishnow {draft_id} to render the PDF and publish it, "
+            f"{draft_text}\n\n---\n"
+            + (f"Cover keywords: {image_brief}\n" if image_brief else "")
+            + f"Reply /publishnow {draft_id} to render the PDF and publish it, "
             f"or /discard {draft_id} to drop it."
         )
 

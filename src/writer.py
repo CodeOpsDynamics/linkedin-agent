@@ -359,7 +359,7 @@ def generate_image_brief(candidate: dict, image_spec: str = ARTICLE_IMAGE_SPEC) 
     try:
         response = client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=60,
+            max_tokens=150,
             messages=[{
                 "role": "user",
                 "content": IMAGE_BRIEF_PROMPT.format(
@@ -369,14 +369,42 @@ def generate_image_brief(candidate: dict, image_spec: str = ARTICLE_IMAGE_SPEC) 
                 ),
             }],
         )
-        keywords = "".join(
+        raw = "".join(
             block.text for block in response.content if block.type == "text"
         ).strip()
-        if keywords and len(keywords) < 200:
+        keywords = _clean_image_brief(raw)
+        if keywords:
             return keywords
+        print(f"[writer] WARN: image brief unusable, raw output: {raw!r}")
     except Exception as e:
         print(f"[writer] WARN: image brief generation failed: {e}")
-    return ""
+    # Never return empty -- an empty brief renders as a bare
+    # "Cover keywords:" line in Telegram. Fall back to the headline itself.
+    return _fallback_image_brief(candidate)
+
+
+def _clean_image_brief(raw: str) -> str:
+    """Model sometimes adds a preamble line ("Here are some keywords:") or
+    wraps output in quotes/bullets. Old code discarded anything >=200 chars
+    outright, which silently produced an empty brief. Instead: take the
+    last non-empty line that contains a comma (the keyword line), strip
+    decoration, and trim at a comma boundary if it's still too long."""
+    if not raw:
+        return ""
+    lines = [ln.strip().strip('"').strip("'").lstrip("-*• ").strip()
+             for ln in raw.splitlines() if ln.strip()]
+    if not lines:
+        return ""
+    comma_lines = [ln for ln in lines if "," in ln]
+    keywords = comma_lines[-1] if comma_lines else lines[-1]
+    if len(keywords) > 200:
+        keywords = keywords[:200].rsplit(",", 1)[0].strip()
+    return keywords
+
+
+def _fallback_image_brief(candidate: dict) -> str:
+    title = (candidate.get("title") or "").strip()
+    return f"{title[:80]}, technology abstract, data center" if title else ""
 
 
 def generate_teaser_post(candidate: dict, voice_ref: str, positioning: str) -> str:
